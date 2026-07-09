@@ -106,7 +106,27 @@ http://127.0.0.1:8080/v1
 
 ## Docker
 
-Build the image:
+GitHub Actions automatically builds and pushes Docker images to GitHub Container Registry:
+
+```text
+ghcr.io/aurora-develop/claude2api
+```
+
+Pull the image:
+
+```bash
+docker pull ghcr.io/aurora-develop/claude2api:latest
+```
+
+Run the published image:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e CLAUDE_SESSION_KEY='your-session-key' \
+  ghcr.io/aurora-develop/claude2api:latest
+```
+
+Build the image locally:
 
 ```bash
 docker build -t claude2api .

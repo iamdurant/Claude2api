@@ -18,8 +18,6 @@
 - 使用 `github.com/bogdanfinn/tls-client` 的 Chrome 指纹请求上游
 - 支持 Docker / Docker Compose 部署
 
-> 注意：本项目不支持 `/v1/images/generations`、`/v1/images/edits`、`/v1/images/variations` 等图片接口。
-
 ## 支持的模型
 
 `/v1/models` 只会返回以下模型，请求时也只允许使用这些模型：
@@ -108,6 +106,26 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 ## Docker 部署
+
+GitHub Actions 会自动构建 Docker 镜像并推送到 GitHub Container Registry：
+
+```text
+ghcr.io/aurora-develop/claude2api
+```
+
+拉取镜像：
+
+```bash
+docker pull ghcr.io/aurora-develop/claude2api:latest
+```
+
+运行远程镜像：
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e CLAUDE_SESSION_KEY='你的-sessionKey' \
+  ghcr.io/aurora-develop/claude2api:latest
+```
 
 ### Docker build
 
@@ -202,11 +220,3 @@ X-Claude-Cookie: <从 claude.ai 浏览器请求中复制的完整 Cookie>
 - 如果 Bearer sessionKey 模式和浏览器行为不一致，建议使用完整 Cookie 模式。
 - 如果上游返回 `429`，说明 claude.ai 当前账号或会话触发了速率限制。
 - 请不要把自己的 `sessionKey`、完整 Cookie、抓包文件提交到公开仓库。
-
-## 不支持的接口
-
-以下接口没有实现：
-
-- `/v1/images/generations`
-- `/v1/images/edits`
-- `/v1/images/variations`
