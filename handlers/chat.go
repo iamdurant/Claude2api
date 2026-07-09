@@ -1,0 +1,114 @@
+package handlers
+
+import (
+	"net/http"
+	"time"
+
+	"claude2api/claude"
+	"claude2api/models"
+
+	"github.com/gin-gonic/gin"
+)
+
+// ChatCompletion handles POST /v1/chat/completions (OpenAI format, streaming + non-streaming)
+func (h *Handler) ChatCompletion(c *gin.Context) {
+	var req models.ChatCompletionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "invalid request body: "+err.Error())
+		return
+	}
+	if len(req.Messages) == 0 {
+		badRequest(c, "messages must contain at least one message")
+		return
+	}
+
+	claudeModel, err := resolveModel(req.Model, h.cfg.DefaultModel)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+
+	client, err := h.newClient(c)
+	if err != nil {
+		internalError(c, "create client: "+err.Error())
+		return
+	}
+
+	prompt := claude.BuildPrompt(req.Messages)
+	effort := "medium"
+
+	if req.Stream {
+		h.chatCompletionStream(c, client, prompt, claudeModel, effort)
+	} else {
+		h.chatCompletionNonStream(c, client, prompt, claudeModel, effort)
+	}
+}
+
+func (h *Handler) chatCompletionNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort string) {
+	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, nil)
+	if err != nil {
+		upstreamError(c, err.Error())
+		return
+	}
+	resp := models.ChatCompletionResponse{
+		ID:      genID("chatcmpl-"),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   claudeModel,
+		Choices: []models.Choice{{
+			Index:        0,
+			Message:      models.Message{Role: "assistant", Content: content},
+			FinishReason: "stop",
+		}},
+		Usage: models.Usage{
+			CompletionTokens: len(content) / 4,
+		},
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) chatCompletionStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort string) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	flusher, _ := c.Writer.(http.Flusher)
+
+	chunkID := genID("chatcmpl-")
+	created := time.Now().Unix()
+
+	// role chunk
+	writeSSE(c.Writer, models.ChatCompletionChunk{
+		ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: claudeModel,
+		Choices: []models.ChunkChoice{{Index: 0, Delta: models.Delta{Role: "assistant"}}},
+	})
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, func(text string) {
+		writeSSE(c.Writer, models.ChatCompletionChunk{
+			ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: claudeModel,
+			Choices: []models.ChunkChoice{{Index: 0, Delta: models.Delta{Content: text}}},
+		})
+		if flusher != nil {
+			flusher.Flush()
+		}
+	})
+	if err != nil {
+		writeSSE(c.Writer, models.ChatCompletionChunk{
+			ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: claudeModel,
+			Choices: []models.ChunkChoice{{Index: 0, Delta: models.Delta{Content: "[error: " + err.Error() + "]"}}},
+		})
+	}
+
+	stop := "stop"
+	writeSSE(c.Writer, models.ChatCompletionChunk{
+		ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: claudeModel,
+		Choices: []models.ChunkChoice{{Index: 0, Delta: models.Delta{}, FinishReason: &stop}},
+	})
+	_, _ = c.Writer.WriteString("data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+}

@@ -1,0 +1,21 @@
+# Local secrets and captures
+.env
+.env.*
+captured/
+.claude/
+
+# Binaries
+*.exe
+*.exe~
+claude2api
+claude2api-test
+
+# Logs / temp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
