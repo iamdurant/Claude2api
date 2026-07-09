@@ -5,6 +5,9 @@
 `Claude2api` 是一个基于 Go + Gin 的 claude.ai 网页 API 代理服务，可以把 claude.ai 网页会话包装成常见的 OpenAI / Anthropic 兼容接口。
 
 项目会使用接近真实浏览器的 TLS / Header / Cookie 环境访问 `https://claude.ai`，并对外提供 JSON 与 SSE 流式响应。
+## API 文档
+
+详细接口说明见：[API.md](API.md)。
 
 ## 功能特性
 
@@ -16,6 +19,9 @@
 - 支持完整浏览器 Cookie 模式，更接近 claude.ai 浏览器请求环境
 - 支持 Bearer sessionKey 模式，便于本地简单调用
 - Bearer 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递
+- completion 请求会携带从真实浏览器请求逆向得到的 claude.ai web `tools` 字段
+- Referer 会按请求阶段动态设置为 `/new` 或 `/chat/<conversation_id>`
+- Datadog/RUM Cookie 与 trace headers 会按浏览器 SDK 的字段结构生成
 - 使用独立 `tlsclient` 模块封装 `github.com/bogdanfinn/tls-client` 的 Chrome 指纹、CookieJar 和浏览器基础 Header
 - 支持 Docker / Docker Compose 部署
 
@@ -223,9 +229,10 @@ X-Claude-Cookie: <从 claude.ai 浏览器请求中复制的完整 Cookie>
 
 如果服务端已经配置 `CLAUDE_COOKIE`，请求端可以不传 `X-Claude-Cookie`。
 
-## API 文档
+## 致谢
 
-详细接口说明见：[API.md](API.md)。
+感谢 [LINUX DO 社区](https://linux.do) —— 本项目在此发布，感谢社区用户的反馈与帮助。
+
 
 英文版：
 

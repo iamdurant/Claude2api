@@ -32,6 +32,9 @@ type Client struct {
 	ssid              string
 	ddSessionID       string
 	ddAppID           string
+	fbp               string
+	gclAU             string
+	ionVK             string
 	createdAtMS       int64
 }
 
@@ -62,11 +65,23 @@ func NewClient(baseURL, sessionKey string, claudeCookie ...string) (*Client, err
 	if ssid == "" {
 		ssid = utils.GenerateUUID()
 	}
-	ddSessionID := cookieValue(cookie, "_dd_s")
+	ddSessionID := ddSessionIDFromCookie(cookie)
 	if ddSessionID == "" {
 		ddSessionID = utils.GenerateUUID()
 	}
 	ddAppID := utils.GenerateUUID()
+	fbp := cookieValue(cookie, "_fbp")
+	if fbp == "" {
+		fbp = fmt.Sprintf("fb.1.%d.%s", createdAtMS, randomDigits(17))
+	}
+	gclAU := cookieValue(cookie, "_gcl_au")
+	if gclAU == "" {
+		gclAU = fmt.Sprintf("1.1.%s.%d", randomDigits(10), createdAtMS/1000)
+	}
+	ionVK := cookieValue(cookie, "ion-vk")
+	if ionVK == "" {
+		ionVK = utils.GenerateUUID()
+	}
 
 	httpClient, err := browserclient.New(baseURL)
 	if err != nil {
@@ -86,6 +101,9 @@ func NewClient(baseURL, sessionKey string, claudeCookie ...string) (*Client, err
 		ssid:              ssid,
 		ddSessionID:       ddSessionID,
 		ddAppID:           ddAppID,
+		fbp:               fbp,
+		gclAU:             gclAU,
+		ionVK:             ionVK,
 		createdAtMS:       createdAtMS,
 	}, nil
 }
@@ -100,6 +118,17 @@ func cookieValue(cookie, name string) string {
 	return ""
 }
 
+func ddSessionIDFromCookie(cookie string) string {
+	dd := cookieValue(cookie, "_dd_s")
+	for _, part := range strings.Split(dd, "&") {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) == 2 && kv[0] == "id" {
+			return kv[1]
+		}
+	}
+	return ""
+}
+
 func (c *Client) generatedDDSCookie() string {
 	expiresAtMS := time.Now().Add(15 * time.Minute).UnixMilli()
 	return fmt.Sprintf("aid=%s&rum=2&id=%s&created=%d&expire=%d", c.ddAppID, c.ddSessionID, c.createdAtMS, expiresAtMS)
@@ -108,7 +137,8 @@ func (c *Client) generatedDDSCookie() string {
 func (c *Client) addDatadogHeaders(req *http.Request) {
 	traceID := randomUint63()
 	parentID := randomUint63()
-	traceHex := fmt.Sprintf("%032x", traceID)
+	traceHigh := randomUint63()
+	traceHex := fmt.Sprintf("%016x%016x", traceHigh, traceID)
 	parentHex := fmt.Sprintf("%016x", parentID)
 	req.Header.Set("traceparent", fmt.Sprintf("00-%s-%s-01", traceHex, parentHex))
 	req.Header.Set("tracestate", "dd=s:1;o:rum")
@@ -143,10 +173,14 @@ func randomDigits(n int) string {
 }
 
 // doRequest performs an authenticated HTTP request to claude.ai
-func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader, refererPath ...string) (*http.Response, error) {
 	req, err := c.httpClient.NewRequest(ctx, method, path, body)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(refererPath) > 0 && refererPath[0] != "" {
+		req.Header.Set("Referer", c.baseURL+refererPath[0])
 	}
 
 	// Claude.ai specific headers
@@ -167,9 +201,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		req.AddCookie(&http.Cookie{Name: "CH-prefers-color-scheme", Value: "light"})
 		req.AddCookie(&http.Cookie{Name: "user-sidebar-visible-on-load", Value: "true"})
 		req.AddCookie(&http.Cookie{Name: "user-sidebar-pinned", Value: "true"})
-		req.AddCookie(&http.Cookie{Name: "_fbp", Value: fmt.Sprintf("fb.1.%d.%s", c.createdAtMS, randomDigits(17))})
-		req.AddCookie(&http.Cookie{Name: "_gcl_au", Value: fmt.Sprintf("1.1.%s.%d", randomDigits(10), c.createdAtMS/1000)})
-		req.AddCookie(&http.Cookie{Name: "ion-vk", Value: utils.GenerateUUID()})
+		req.AddCookie(&http.Cookie{Name: "_fbp", Value: c.fbp})
+		req.AddCookie(&http.Cookie{Name: "_gcl_au", Value: c.gclAU})
+		req.AddCookie(&http.Cookie{Name: "ion-vk", Value: c.ionVK})
 		req.AddCookie(&http.Cookie{Name: "_dd_s", Value: c.generatedDDSCookie()})
 		if c.orgID != "" {
 			req.AddCookie(&http.Cookie{Name: "lastActiveOrg", Value: c.orgID})
@@ -185,7 +219,7 @@ func (c *Client) GetOrganization(ctx context.Context) (string, error) {
 		return c.orgID, nil
 	}
 
-	resp, err := c.doRequest(ctx, "GET", "/api/organizations", nil)
+	resp, err := c.doRequest(ctx, "GET", "/api/organizations", nil, "/new")
 	if err != nil {
 		return "", fmt.Errorf("get organizations: %w", err)
 	}
@@ -223,7 +257,7 @@ func (c *Client) CreateConversation(ctx context.Context, title string) (string, 
 	body, _ := utils.JSONToReader(reqBody)
 
 	resp, err := c.doRequest(ctx, "POST",
-		fmt.Sprintf("/api/organizations/%s/chat_conversations", orgID), body)
+		fmt.Sprintf("/api/organizations/%s/chat_conversations", orgID), body, "/new")
 	if err != nil {
 		return "", fmt.Errorf("create conversation: %w", err)
 	}
@@ -250,7 +284,7 @@ func (c *Client) DeleteConversation(ctx context.Context, convID string) error {
 	}
 
 	resp, err := c.doRequest(ctx, "DELETE",
-		fmt.Sprintf("/api/organizations/%s/chat_conversations/%s", orgID, convID), nil)
+		fmt.Sprintf("/api/organizations/%s/chat_conversations/%s", orgID, convID), nil, "/chat/"+convID)
 	if err != nil {
 		return fmt.Errorf("delete conversation: %w", err)
 	}
@@ -276,7 +310,7 @@ func (c *Client) SendMessage(ctx context.Context, convID string, req *models.Cla
 	path := fmt.Sprintf("/api/organizations/%s/chat_conversations/%s/completion",
 		orgID, convID)
 
-	resp, err := c.doRequest(ctx, "POST", path, body)
+	resp, err := c.doRequest(ctx, "POST", path, body, "/chat/"+convID)
 	if err != nil {
 		return nil, fmt.Errorf("send message: %w", err)
 	}

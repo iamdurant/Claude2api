@@ -14,6 +14,9 @@ It reverse-proxies requests to `https://claude.ai` using a browser-like TLS/clie
 - Browser Cookie mode to match a real claude.ai browser session
 - Bearer session key mode for simple local use
 - Dedicated local `tlsclient` module wrapping the Chrome-profile `github.com/bogdanfinn/tls-client` client, CookieJar, and common browser headers
+- Completion requests include the claude.ai web `tools` payload reverse-engineered from a real browser request
+- Referer is set dynamically to `/new` or `/chat/<conversation_id>` depending on the upstream request phase
+- Datadog/RUM cookies and trace headers are generated following the browser SDK field structure
 - In Bearer mode, the server generates frontend-like browser cookies/headers where possible; signed or Cloudflare cookies are not forged or sent
 
 Image endpoints such as `/v1/images/generations`, `/v1/images/edits`, and `/v1/images/variations` are not supported.

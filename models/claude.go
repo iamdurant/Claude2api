@@ -67,6 +67,7 @@ type ClaudeCompletionRequest struct {
 	Model                    string                    `json:"model"`
 	Effort                   string                    `json:"effort,omitempty"`        // "low"|"medium"|"high"|"xhigh"|"max"
 	ThinkingMode             string                    `json:"thinking_mode,omitempty"` // "auto"|"none"
+	Tools                    json.RawMessage           `json:"tools,omitempty"`
 	TurnMessageUUIDs         *TurnMessageUUIDs         `json:"turn_message_uuids,omitempty"`
 	Attachments              []ClaudeAttachment        `json:"attachments"`
 	Files                    []ClaudeFile              `json:"files"`

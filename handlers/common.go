@@ -71,6 +71,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		Model:             claudeModel,
 		Effort:            effort,
 		ThinkingMode:      "auto",
+		Tools:             claude.WebTools(),
 		TurnMessageUUIDs: &models.TurnMessageUUIDs{
 			HumanMessageUUID:     utils.GenerateUUID(),
 			AssistantMessageUUID: utils.GenerateUUID(),

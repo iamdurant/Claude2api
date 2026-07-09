@@ -392,7 +392,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 ## sessionKey 模式下自动生成的环境
 
-当只传 `sessionKey` 时，代理服务端会自动生成前端可生成的浏览器环境，例如：
+当只传 `sessionKey` 时，代理服务端会自动生成前端可生成的浏览器环境，并补齐更接近浏览器的请求结构，例如：
 
 - `sessionKeyLC`
 - `anthropic-device-id`
@@ -402,6 +402,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - `_dd_s`
 - `traceparent` / Datadog RUM 相关 Header
 - 部分 UI / analytics Cookie
+- completion 请求中的 claude.ai web `tools` 字段
+- 按阶段变化的 Referer：`/new`、`/chat/<conversation_id>`
 
 这些值属于 UUID、时间戳、前端 session 或 RUM trace 类环境，可以由本服务生成并在一个 client 生命周期内保持一致。
 

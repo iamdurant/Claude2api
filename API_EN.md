@@ -235,7 +235,7 @@ The proxy extracts `sessionKey` from the Cookie when no Bearer token is present.
 
 ## Generated Environment in sessionKey Mode
 
-When only a `sessionKey` is provided, the server generates browser-like values that are normally frontend-generated, such as:
+When only a `sessionKey` is provided, the server generates browser-like values and request structure that are normally frontend-generated, such as:
 
 - `sessionKeyLC`
 - `anthropic-device-id`
@@ -245,6 +245,8 @@ When only a `sessionKey` is provided, the server generates browser-like values t
 - `_dd_s`
 - `traceparent` / Datadog RUM headers
 - selected UI / analytics cookies
+- the claude.ai web `tools` payload in completion requests
+- dynamic Referer values: `/new`, `/chat/<conversation_id>`
 
 Signed server-side or Cloudflare-issued cookies are not forged and are not sent in Bearer-only mode:
 
