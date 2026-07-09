@@ -16,7 +16,7 @@
 - 支持完整浏览器 Cookie 模式，更接近 claude.ai 浏览器请求环境
 - 支持 Bearer sessionKey 模式，便于本地简单调用
 - Bearer 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递
-- 使用 `github.com/bogdanfinn/tls-client` 的 Chrome 指纹请求上游
+- 使用独立 `tlsclient` 模块封装 `github.com/bogdanfinn/tls-client` 的 Chrome 指纹、CookieJar 和浏览器基础 Header
 - 支持 Docker / Docker Compose 部署
 
 ## 支持的模型

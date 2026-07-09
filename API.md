@@ -412,6 +412,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - `__cf_bm`
 - `_cfuvid`
 
+`routingHint` 是 claude.ai 后端签发的路由提示，值通常是 `sk-ant-rh-...` 形式，内部结构类似带签名的 JWT。它一般在登录、会话刷新、账号路由初始化或组织信息加载时由 claude.ai 服务端下发；客户端最多只能原样保存和回传，不能自行生成有效值。
+
 如果确实需要这些值，请使用 `X-Claude-Cookie` 或 `CLAUDE_COOKIE` 传入真实浏览器完整 Cookie。
 
 ## 不支持的接口

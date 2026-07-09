@@ -12,16 +12,15 @@ import (
 	"time"
 
 	"claude2api/models"
+	browserclient "claude2api/tlsclient"
 	"claude2api/utils"
 
 	http "github.com/bogdanfinn/fhttp"
-	tlsclient "github.com/bogdanfinn/tls-client"
-	"github.com/bogdanfinn/tls-client/profiles"
 )
 
 // Client is the reverse-engineered claude.ai API client with TLS fingerprint bypass
 type Client struct {
-	httpClient        tlsclient.HttpClient
+	httpClient        *browserclient.Client
 	baseURL           string
 	sessionKey        string
 	claudeCookie      string
@@ -69,22 +68,14 @@ func NewClient(baseURL, sessionKey string, claudeCookie ...string) (*Client, err
 	}
 	ddAppID := utils.GenerateUUID()
 
-	jar := tlsclient.NewCookieJar()
-	options := []tlsclient.HttpClientOption{
-		tlsclient.WithTimeoutSeconds(300),
-		tlsclient.WithClientProfile(profiles.Chrome_146),
-		tlsclient.WithCookieJar(jar),
-		tlsclient.WithNotFollowRedirects(),
-	}
-
-	httpClient, err := tlsclient.NewHttpClient(tlsclient.NewNoopLogger(), options...)
+	httpClient, err := browserclient.New(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("create tls-client: %w", err)
+		return nil, err
 	}
 
 	return &Client{
 		httpClient:        httpClient,
-		baseURL:           strings.TrimRight(baseURL, "/"),
+		baseURL:           httpClient.BaseURL(),
 		sessionKey:        sessionKey,
 		claudeCookie:      cookie,
 		orgID:             cookieValue(cookie, "lastActiveOrg"),
@@ -153,40 +144,15 @@ func randomDigits(n int) string {
 
 // doRequest performs an authenticated HTTP request to claude.ai
 func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	url := c.baseURL + path
-
-	var req *http.Request
-	var err error
-	if body != nil {
-		req, err = http.NewRequestWithContext(ctx, method, url, body)
-	} else {
-		req, err = http.NewRequestWithContext(ctx, method, url, nil)
-	}
+	req, err := c.httpClient.NewRequest(ctx, method, path, body)
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
+		return nil, err
 	}
 
-	// === Headers from real Chrome 146 on claude.ai (captured via js-reverse) ===
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-	req.Header.Set("Origin", c.baseURL)
-	req.Header.Set("Referer", c.baseURL+"/")
-	req.Header.Set("sec-ch-ua", `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`)
-	req.Header.Set("sec-ch-ua-mobile", "?0")
-	req.Header.Set("sec-ch-ua-platform", `"Windows"`)
-	req.Header.Set("sec-fetch-dest", "empty")
-	req.Header.Set("sec-fetch-mode", "cors")
-	req.Header.Set("sec-fetch-site", "same-origin")
 	// Claude.ai specific headers
 	req.Header.Set("anthropic-client-platform", "web_claude_ai")
 	req.Header.Set("anthropic-device-id", c.deviceID)
 	c.addDatadogHeaders(req)
-
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
 
 	// Authentication: prefer the full browser Cookie header when available.
 	if c.claudeCookie != "" {
@@ -210,12 +176,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		}
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http do: %w", err)
-	}
-
-	return resp, nil
+	return c.httpClient.Do(req)
 }
 
 // GetOrganization fetches the user's organization UUID

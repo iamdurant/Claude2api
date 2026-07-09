@@ -253,6 +253,8 @@ Signed server-side or Cloudflare-issued cookies are not forged and are not sent 
 - `__cf_bm`
 - `_cfuvid`
 
+`routingHint` is issued by the claude.ai backend. It commonly appears as `sk-ant-rh-...` and its internal shape is similar to a signed JWT. It is usually created during login, session refresh, account routing initialization, or organization loading. Clients can only store and replay a real value; they cannot generate a valid one locally.
+
 Use `X-Claude-Cookie` or `CLAUDE_COOKIE` with a real browser Cookie header if you need those values.
 
 ## Unsupported Endpoints
