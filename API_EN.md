@@ -233,6 +233,28 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 The proxy extracts `sessionKey` from the Cookie when no Bearer token is present.
 
+## Generated Environment in sessionKey Mode
+
+When only a `sessionKey` is provided, the server generates browser-like values that are normally frontend-generated, such as:
+
+- `sessionKeyLC`
+- `anthropic-device-id`
+- `activitySessionId`
+- `ajs_anonymous_id`
+- `__ssid`
+- `_dd_s`
+- `traceparent` / Datadog RUM headers
+- selected UI / analytics cookies
+
+Signed server-side or Cloudflare-issued cookies are not forged and are not sent in Bearer-only mode:
+
+- `routingHint`
+- `cf_clearance`
+- `__cf_bm`
+- `_cfuvid`
+
+Use `X-Claude-Cookie` or `CLAUDE_COOKIE` with a real browser Cookie header if you need those values.
+
 ## Unsupported Endpoints
 
 The following endpoints are intentionally not implemented:

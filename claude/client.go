@@ -3,10 +3,13 @@ package claude
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"claude2api/models"
 	"claude2api/utils"
@@ -18,12 +21,19 @@ import (
 
 // Client is the reverse-engineered claude.ai API client with TLS fingerprint bypass
 type Client struct {
-	httpClient   tlsclient.HttpClient
-	baseURL      string
-	sessionKey   string
-	claudeCookie string
-	orgID        string // cached org UUID
-	deviceID     string // anthropic-device-id
+	httpClient        tlsclient.HttpClient
+	baseURL           string
+	sessionKey        string
+	claudeCookie      string
+	orgID             string // cached org UUID
+	deviceID          string // anthropic-device-id
+	sessionKeyLC      string
+	activitySessionID string
+	anonymousID       string
+	ssid              string
+	ddSessionID       string
+	ddAppID           string
+	createdAtMS       int64
 }
 
 // NewClient creates a new claude.ai API client using Chrome 146 TLS fingerprint
@@ -36,6 +46,29 @@ func NewClient(baseURL, sessionKey string, claudeCookie ...string) (*Client, err
 	if deviceID == "" {
 		deviceID = utils.GenerateUUID()
 	}
+	createdAtMS := time.Now().UnixMilli()
+	sessionKeyLC := cookieValue(cookie, "sessionKeyLC")
+	if sessionKeyLC == "" {
+		sessionKeyLC = fmt.Sprintf("%d", createdAtMS)
+	}
+	activitySessionID := cookieValue(cookie, "activitySessionId")
+	if activitySessionID == "" {
+		activitySessionID = utils.GenerateUUID()
+	}
+	anonymousID := cookieValue(cookie, "ajs_anonymous_id")
+	if anonymousID == "" {
+		anonymousID = "claudeai.v1." + utils.GenerateUUID()
+	}
+	ssid := cookieValue(cookie, "__ssid")
+	if ssid == "" {
+		ssid = utils.GenerateUUID()
+	}
+	ddSessionID := cookieValue(cookie, "_dd_s")
+	if ddSessionID == "" {
+		ddSessionID = utils.GenerateUUID()
+	}
+	ddAppID := utils.GenerateUUID()
+
 	jar := tlsclient.NewCookieJar()
 	options := []tlsclient.HttpClientOption{
 		tlsclient.WithTimeoutSeconds(300),
@@ -50,12 +83,19 @@ func NewClient(baseURL, sessionKey string, claudeCookie ...string) (*Client, err
 	}
 
 	return &Client{
-		httpClient:   httpClient,
-		baseURL:      strings.TrimRight(baseURL, "/"),
-		sessionKey:   sessionKey,
-		claudeCookie: cookie,
-		orgID:        cookieValue(cookie, "lastActiveOrg"),
-		deviceID:     deviceID,
+		httpClient:        httpClient,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		sessionKey:        sessionKey,
+		claudeCookie:      cookie,
+		orgID:             cookieValue(cookie, "lastActiveOrg"),
+		deviceID:          deviceID,
+		sessionKeyLC:      sessionKeyLC,
+		activitySessionID: activitySessionID,
+		anonymousID:       anonymousID,
+		ssid:              ssid,
+		ddSessionID:       ddSessionID,
+		ddAppID:           ddAppID,
+		createdAtMS:       createdAtMS,
 	}, nil
 }
 
@@ -67,6 +107,48 @@ func cookieValue(cookie, name string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Client) generatedDDSCookie() string {
+	expiresAtMS := time.Now().Add(15 * time.Minute).UnixMilli()
+	return fmt.Sprintf("aid=%s&rum=2&id=%s&created=%d&expire=%d", c.ddAppID, c.ddSessionID, c.createdAtMS, expiresAtMS)
+}
+
+func (c *Client) addDatadogHeaders(req *http.Request) {
+	traceID := randomUint63()
+	parentID := randomUint63()
+	traceHex := fmt.Sprintf("%032x", traceID)
+	parentHex := fmt.Sprintf("%016x", parentID)
+	req.Header.Set("traceparent", fmt.Sprintf("00-%s-%s-01", traceHex, parentHex))
+	req.Header.Set("tracestate", "dd=s:1;o:rum")
+	req.Header.Set("x-datadog-origin", "rum")
+	req.Header.Set("x-datadog-parent-id", fmt.Sprintf("%d", parentID))
+	req.Header.Set("x-datadog-sampling-priority", "1")
+	req.Header.Set("x-datadog-trace-id", fmt.Sprintf("%d", traceID))
+}
+
+func randomUint63() uint64 {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return uint64(time.Now().UnixNano()) & ((1 << 63) - 1)
+	}
+	return binary.BigEndian.Uint64(b[:]) & ((1 << 63) - 1)
+}
+
+func randomDigits(n int) string {
+	const digits = "0123456789"
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		fallback := fmt.Sprintf("%d", time.Now().UnixNano())
+		if len(fallback) >= n {
+			return fallback[:n]
+		}
+		return fallback
+	}
+	for i := range b {
+		b[i] = digits[int(b[i])%len(digits)]
+	}
+	return string(b)
 }
 
 // doRequest performs an authenticated HTTP request to claude.ai
@@ -100,6 +182,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 	// Claude.ai specific headers
 	req.Header.Set("anthropic-client-platform", "web_claude_ai")
 	req.Header.Set("anthropic-device-id", c.deviceID)
+	c.addDatadogHeaders(req)
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -110,8 +193,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		req.Header.Set("Cookie", c.claudeCookie)
 	} else {
 		req.AddCookie(&http.Cookie{Name: "sessionKey", Value: c.sessionKey})
-		req.AddCookie(&http.Cookie{Name: "sessionKeyLC", Value: "1"})
+		req.AddCookie(&http.Cookie{Name: "sessionKeyLC", Value: c.sessionKeyLC})
 		req.AddCookie(&http.Cookie{Name: "anthropic-device-id", Value: c.deviceID})
+		req.AddCookie(&http.Cookie{Name: "activitySessionId", Value: c.activitySessionID})
+		req.AddCookie(&http.Cookie{Name: "ajs_anonymous_id", Value: c.anonymousID})
+		req.AddCookie(&http.Cookie{Name: "__ssid", Value: c.ssid})
+		req.AddCookie(&http.Cookie{Name: "CH-prefers-color-scheme", Value: "light"})
+		req.AddCookie(&http.Cookie{Name: "user-sidebar-visible-on-load", Value: "true"})
+		req.AddCookie(&http.Cookie{Name: "user-sidebar-pinned", Value: "true"})
+		req.AddCookie(&http.Cookie{Name: "_fbp", Value: fmt.Sprintf("fb.1.%d.%s", c.createdAtMS, randomDigits(17))})
+		req.AddCookie(&http.Cookie{Name: "_gcl_au", Value: fmt.Sprintf("1.1.%s.%d", randomDigits(10), c.createdAtMS/1000)})
+		req.AddCookie(&http.Cookie{Name: "ion-vk", Value: utils.GenerateUUID()})
+		req.AddCookie(&http.Cookie{Name: "_dd_s", Value: c.generatedDDSCookie()})
 		if c.orgID != "" {
 			req.AddCookie(&http.Cookie{Name: "lastActiveOrg", Value: c.orgID})
 		}

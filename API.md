@@ -390,6 +390,30 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 没有 Bearer token 时，代理会尝试从 Cookie 中提取 `sessionKey`。
 
+## sessionKey 模式下自动生成的环境
+
+当只传 `sessionKey` 时，代理服务端会自动生成前端可生成的浏览器环境，例如：
+
+- `sessionKeyLC`
+- `anthropic-device-id`
+- `activitySessionId`
+- `ajs_anonymous_id`
+- `__ssid`
+- `_dd_s`
+- `traceparent` / Datadog RUM 相关 Header
+- 部分 UI / analytics Cookie
+
+这些值属于 UUID、时间戳、前端 session 或 RUM trace 类环境，可以由本服务生成并在一个 client 生命周期内保持一致。
+
+以下属于服务端签名或 Cloudflare 下发的值，不能伪造；在只传 `sessionKey` 时，本服务不会生成，也不会传递：
+
+- `routingHint`
+- `cf_clearance`
+- `__cf_bm`
+- `_cfuvid`
+
+如果确实需要这些值，请使用 `X-Claude-Cookie` 或 `CLAUDE_COOKIE` 传入真实浏览器完整 Cookie。
+
 ## 不支持的接口
 
 以下接口没有注册路由，因此不会支持：

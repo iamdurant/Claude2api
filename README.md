@@ -15,6 +15,7 @@
 - 支持非流式与 SSE 流式返回
 - 支持完整浏览器 Cookie 模式，更接近 claude.ai 浏览器请求环境
 - 支持 Bearer sessionKey 模式，便于本地简单调用
+- Bearer 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递
 - 使用 `github.com/bogdanfinn/tls-client` 的 Chrome 指纹请求上游
 - 支持 Docker / Docker Compose 部署
 
@@ -186,6 +187,24 @@ Authorization: Bearer <claude.ai sessionKey>
 ```
 
 如果服务端已经配置 `CLAUDE_SESSION_KEY`，请求端可以不传这个 Header。
+
+Bearer 模式下，用户只需要提供 `sessionKey`。服务端会自动生成这些前端可生成的环境值：
+
+- `sessionKeyLC`
+- `anthropic-device-id`
+- `activitySessionId`
+- `ajs_anonymous_id`
+- `__ssid`
+- `_dd_s`
+- `traceparent` / Datadog RUM 相关 Header
+- 部分 UI / analytics Cookie
+
+以下不能伪造的服务端签名或 Cloudflare Cookie 不会自动生成，也不会在 Bearer 模式下传递：
+
+- `routingHint`
+- `cf_clearance`
+- `__cf_bm`
+- `_cfuvid`
 
 ### 方式二：完整浏览器 Cookie
 

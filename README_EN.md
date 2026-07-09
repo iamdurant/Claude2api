@@ -13,6 +13,7 @@ It reverse-proxies requests to `https://claude.ai` using a browser-like TLS/clie
 - Streaming and non-streaming responses
 - Browser Cookie mode to match a real claude.ai browser session
 - Bearer session key mode for simple local use
+- In Bearer mode, the server generates frontend-like browser cookies/headers where possible; signed or Cloudflare cookies are not forged or sent
 
 Image endpoints such as `/v1/images/generations`, `/v1/images/edits`, and `/v1/images/variations` are not supported.
 
