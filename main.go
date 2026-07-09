@@ -42,6 +42,7 @@ func main() {
 		v1.POST("/chat/completions", h.ChatCompletion)
 		v1.POST("/messages", h.AnthropicMessages)
 		v1.POST("/responses", h.Responses)
+		v1.DELETE("/conversations/:id", h.DeleteConversation)
 	}
 
 	srv := &http.Server{

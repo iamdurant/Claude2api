@@ -16,6 +16,7 @@
 - OpenAI Responses 兼容接口：`POST /v1/responses`
 - 模型列表接口：`GET /v1/models`
 - 支持非流式与 SSE 流式返回
+- 支持 `conversation_id` 持久会话模式，保持多轮对话连续性
 - 支持完整浏览器 Cookie 模式，更接近 claude.ai 浏览器请求环境
 - 支持 Bearer sessionKey 模式，便于本地简单调用
 - Bearer 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递

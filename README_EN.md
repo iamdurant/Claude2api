@@ -11,6 +11,7 @@ It reverse-proxies requests to `https://claude.ai` using a browser-like TLS/clie
 - OpenAI Responses-compatible endpoint: `POST /v1/responses`
 - Model listing: `GET /v1/models`
 - Streaming and non-streaming responses
+- Persistent `conversation_id` mode for multi-turn conversation continuity
 - Browser Cookie mode to match a real claude.ai browser session
 - Bearer session key mode for simple local use
 - Dedicated local `tlsclient` module wrapping the Chrome-profile `github.com/bogdanfinn/tls-client` client, CookieJar, and common browser headers

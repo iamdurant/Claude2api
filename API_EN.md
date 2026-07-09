@@ -108,6 +108,7 @@ Fields currently used by the proxy:
 | `model` | string | No | Defaults to `DEFAULT_MODEL`. Must be supported. |
 | `messages` | array | Yes | At least one message. Roles: `system`, `user`, `assistant`. |
 | `stream` | boolean | No | When `true`, returns SSE chunks. |
+| `conversation_id` | string | No | Enables persistent conversation mode; the same ID reuses one upstream claude.ai conversation. |
 | `max_tokens` | integer | No | Accepted for compatibility. |
 | `temperature` | number | No | Accepted for compatibility. |
 | `top_p` | number | No | Accepted for compatibility. |
@@ -215,6 +216,37 @@ OpenAI Responses-compatible endpoint.
   "stream": false
 }
 ```
+
+## Conversation Continuity
+
+By default, when `conversation_id` is omitted, each request creates a temporary claude.ai conversation and deletes it after completion.
+
+When `conversation_id` is provided, the server stores an in-memory mapping and reuses the same upstream claude.ai conversation:
+
+```json
+{
+  "conversation_id": "my-chat-001",
+  "model": "claude-sonnet-5",
+  "messages": [
+    {"role": "user", "content": "Continue the previous topic"}
+  ]
+}
+```
+
+Delete a persistent conversation:
+
+```bash
+curl -X DELETE http://127.0.0.1:8080/v1/conversations/my-chat-001 \
+  -H 'Authorization: Bearer <sessionKey>'
+```
+
+Response:
+
+```json
+{"id":"my-chat-001","deleted":true}
+```
+
+The conversation mapping is stored in memory and is lost after server restart.
 
 ## Full Browser Cookie Usage
 

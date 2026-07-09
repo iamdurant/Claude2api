@@ -41,9 +41,9 @@ func (h *Handler) AnthropicMessages(c *gin.Context) {
 	effort := "medium"
 
 	if req.Stream {
-		h.anthropicStream(c, client, prompt, claudeModel, effort)
+		h.anthropicStream(c, client, prompt, claudeModel, effort, req.ConversationID)
 	} else {
-		h.anthropicNonStream(c, client, prompt, claudeModel, effort)
+		h.anthropicNonStream(c, client, prompt, claudeModel, effort, req.ConversationID)
 	}
 }
 
@@ -90,8 +90,8 @@ func anthropicContentToString(content interface{}) string {
 	}
 }
 
-func (h *Handler) anthropicNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort string) {
-	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, nil)
+func (h *Handler) anthropicNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
+	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
@@ -110,7 +110,7 @@ func (h *Handler) anthropicNonStream(c *gin.Context, client *claude.Client, prom
 	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort string) {
+func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -140,7 +140,7 @@ func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt,
 	})
 
 	var outputChars int
-	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, func(text string) {
+	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
 		outputChars += len(text)
 		writeSSE(c.Writer, models.AnthropicStreamContentBlockDelta{
 			Type:  "content_block_delta",

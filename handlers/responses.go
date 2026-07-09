@@ -35,9 +35,9 @@ func (h *Handler) Responses(c *gin.Context) {
 	effort := "medium"
 
 	if req.Stream {
-		h.responsesStream(c, client, prompt, claudeModel, effort)
+		h.responsesStream(c, client, prompt, claudeModel, effort, req.ConversationID)
 	} else {
-		h.responsesNonStream(c, client, prompt, claudeModel, effort)
+		h.responsesNonStream(c, client, prompt, claudeModel, effort, req.ConversationID)
 	}
 }
 
@@ -111,8 +111,8 @@ func flattenContentParts(parts []interface{}) string {
 	return sb.String()
 }
 
-func (h *Handler) responsesNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort string) {
-	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, nil)
+func (h *Handler) responsesNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
+	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
@@ -126,10 +126,10 @@ func (h *Handler) responsesNonStream(c *gin.Context, client *claude.Client, prom
 		Model:     claudeModel,
 		Status:    "completed",
 		Output: []models.ResponseOutputItem{{
-			Type:   "message",
-			ID:     msgID,
-			Role:   "assistant",
-			Status: "completed",
+			Type:    "message",
+			ID:      msgID,
+			Role:    "assistant",
+			Status:  "completed",
 			Content: []models.ResponseContentPart{{Type: "output_text", Text: content}},
 		}},
 		Usage: models.ResponsesUsage{
@@ -140,7 +140,7 @@ func (h *Handler) responsesNonStream(c *gin.Context, client *claude.Client, prom
 	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) responsesStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort string) {
+func (h *Handler) responsesStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -171,7 +171,7 @@ func (h *Handler) responsesStream(c *gin.Context, client *claude.Client, prompt,
 	})
 
 	var full strings.Builder
-	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, func(text string) {
+	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
 		full.WriteString(text)
 		writeSSE(c.Writer, models.ResponsesOutputTextDelta{
 			Type: "response.output_text.delta", ItemID: msgID, OutputIndex: 0, ContentIndex: 0, Delta: text,

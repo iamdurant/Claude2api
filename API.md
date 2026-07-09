@@ -110,6 +110,7 @@ OpenAI Chat Completions 兼容接口。
 | `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`。必须是支持模型。 |
 | `messages` | array | 是 | 至少一条消息。支持 `system`、`user`、`assistant`。 |
 | `stream` | boolean | 否 | 为 `true` 时返回 SSE 流。 |
+| `conversation_id` | string | 否 | 传入后启用持久会话，同一个 ID 会复用同一个 claude.ai conversation。 |
 | `max_tokens` | integer | 否 | 兼容字段。 |
 | `temperature` | number | 否 | 兼容字段。 |
 | `top_p` | number | 否 | 兼容字段。 |
@@ -210,6 +211,7 @@ Anthropic Messages 兼容接口。
 | `system` | string | 否 | 作为 system prompt 前置。 |
 | `max_tokens` | integer | 否 | 为空或 0 时默认 `4096`。 |
 | `stream` | boolean | 否 | 为 `true` 时返回 Anthropic 风格 SSE。 |
+| `conversation_id` | string | 否 | 传入后启用持久会话，同一个 ID 会复用同一个 claude.ai conversation。 |
 | `temperature` | number | 否 | 兼容字段。 |
 | `top_p` | number | 否 | 兼容字段。 |
 | `top_k` | integer | 否 | 兼容字段。 |
@@ -311,6 +313,7 @@ OpenAI Responses 兼容接口。
 | `input` | string 或 array | 否 | 输入内容。 |
 | `instructions` | string | 否 | 作为 system prompt 前置。 |
 | `stream` | boolean | 否 | 为 `true` 时返回 Responses 风格 SSE。 |
+| `conversation_id` | string | 否 | 传入后启用持久会话，同一个 ID 会复用同一个 claude.ai conversation。 |
 | `max_output_tokens` | integer | 否 | 兼容字段。 |
 | `temperature` | number | 否 | 兼容字段。 |
 | `top_p` | number | 否 | 兼容字段。 |
@@ -372,6 +375,37 @@ data: {"type":"response.output_item.done","output_index":0,"item":{"type":"messa
 
 data: {"type":"response.completed","response":{"status":"completed"}}
 ```
+
+## 对话连续性
+
+默认情况下，不传 `conversation_id` 时，每次请求都会创建临时 claude.ai conversation，请求结束后自动删除。
+
+如果传入 `conversation_id`，服务端会在内存中保存映射，并复用同一个 claude.ai conversation：
+
+```json
+{
+  "conversation_id": "my-chat-001",
+  "model": "claude-sonnet-5",
+  "messages": [
+    {"role": "user", "content": "继续刚才的话题"}
+  ]
+}
+```
+
+删除持久会话：
+
+```bash
+curl -X DELETE http://127.0.0.1:8080/v1/conversations/my-chat-001 \
+  -H 'Authorization: Bearer <sessionKey>'
+```
+
+响应：
+
+```json
+{"id":"my-chat-001","deleted":true}
+```
+
+注意：当前会话映射保存在内存中，服务重启后会丢失。
 
 ## 完整浏览器 Cookie 用法
 

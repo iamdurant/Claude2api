@@ -19,12 +19,13 @@ import (
 
 // Handler holds shared config and routes requests to claude.ai
 type Handler struct {
-	cfg *config.Config
+	cfg           *config.Config
+	conversations *conversationStore
 }
 
 // NewHandler creates a handler
 func NewHandler(cfg *config.Config) *Handler {
-	return &Handler{cfg: cfg}
+	return &Handler{cfg: cfg, conversations: newConversationStore()}
 }
 
 // resolveModel returns the claude.ai model id for a requested model, or an error
@@ -49,23 +50,49 @@ func (h *Handler) newClient(c *gin.Context) (*claude.Client, error) {
 // runCompletion drives a full claude.ai round-trip: create conversation, send
 // prompt, then invoke onText for each incremental text delta.
 // Returns the full accumulated text or an error.
-func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prompt, claudeModel, effort string,
+func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string,
 	onText func(text string)) (string, error) {
 
-	convID, err := client.CreateConversation(ctx, "chat")
-	if err != nil {
-		return "", fmt.Errorf("create conversation: %w", err)
+	convID := ""
+	persistent := conversationID != ""
+	var state *conversationState
+	if persistent {
+		if existing, ok := h.conversations.get(conversationID); ok {
+			state = existing
+			convID = existing.ClaudeConversationID
+		} else {
+			createdID, err := client.CreateConversation(ctx, "chat")
+			if err != nil {
+				return "", fmt.Errorf("create conversation: %w", err)
+			}
+			convID = createdID
+			state = &conversationState{ClientConversationID: conversationID, ClaudeConversationID: convID}
+			h.conversations.set(state)
+		}
+	} else {
+		createdID, err := client.CreateConversation(ctx, "chat")
+		if err != nil {
+			return "", fmt.Errorf("create conversation: %w", err)
+		}
+		convID = createdID
+		defer func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = client.DeleteConversation(bgCtx, convID)
+			cancel()
+		}()
 	}
-	defer func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_ = client.DeleteConversation(bgCtx, convID)
-		cancel()
-	}()
+
+	humanUUID := utils.GenerateUUID()
+	assistantUUID := utils.GenerateUUID()
+	parentUUID := utils.GenerateUUID()
+	if state != nil && state.LastAssistantUUID != "" {
+		parentUUID = state.LastAssistantUUID
+	}
 
 	// Build the real request body matching claude.ai's format
 	req := &models.ClaudeCompletionRequest{
 		Prompt:            prompt,
-		ParentMessageUUID: utils.GenerateUUID(),
+		ParentMessageUUID: parentUUID,
 		Timezone:          h.cfg.Timezone,
 		Locale:            h.cfg.Locale,
 		Model:             claudeModel,
@@ -73,8 +100,8 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		ThinkingMode:      "auto",
 		Tools:             claude.WebTools(),
 		TurnMessageUUIDs: &models.TurnMessageUUIDs{
-			HumanMessageUUID:     utils.GenerateUUID(),
-			AssistantMessageUUID: utils.GenerateUUID(),
+			HumanMessageUUID:     humanUUID,
+			AssistantMessageUUID: assistantUUID,
 		},
 		Attachments:   []models.ClaudeAttachment{},
 		Files:         []models.ClaudeFile{},
@@ -112,6 +139,9 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		if claude.IsStopEvent(evt) {
 			break
 		}
+	}
+	if persistent {
+		h.conversations.touch(conversationID, humanUUID, assistantUUID)
 	}
 	return sb.String(), nil
 }
