@@ -61,4 +61,5 @@ var SupportedModels = map[string]string{
 	"claude-opus-3":     "claude-opus-3",
 	"claude-sonnet-4-6": "claude-sonnet-4-6",
 	"claude-sonnet-5":   "claude-sonnet-5",
+	"claude-opus-5":     "claude-opus-5",
 }

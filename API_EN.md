@@ -78,6 +78,7 @@ Supported model IDs:
 - `claude-opus-3`
 - `claude-sonnet-4-6`
 - `claude-sonnet-5`
+- `claude-opus-5`
 
 ## Chat Completions
 

@@ -9,7 +9,7 @@ captured/
 *.exe~
 claude2api
 claude2api-test
-
+accounts.txt
 # Logs / temp
 *.log
 *.tmp

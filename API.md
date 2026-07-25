@@ -80,6 +80,7 @@ curl http://127.0.0.1:8080/v1/models \
 - `claude-opus-3`
 - `claude-sonnet-4-6`
 - `claude-sonnet-5`
+- `claude-opus-5`
 
 ## OpenAI Chat Completions
 
