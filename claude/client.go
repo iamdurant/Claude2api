@@ -420,6 +420,14 @@ func ExtractTextFromSSE(evt models.ClaudeCompletionEvent) string {
 	return ""
 }
 
+// ExtractThinkingFromSSE extracts thinking text from a claude.ai SSE event
+func ExtractThinkingFromSSE(evt models.ClaudeCompletionEvent) string {
+	if evt.TextDelta != nil && evt.TextDelta.Type == "thinking_delta" {
+		return evt.TextDelta.Thinking
+	}
+	return ""
+}
+
 // IsStopEvent returns true if the event signals end of stream
 func IsStopEvent(evt models.ClaudeCompletionEvent) bool {
 	return evt.Type == "message_stop" || evt.Type == "message_delta" && evt.MessageDelta != nil && evt.MessageDelta.StopReason != ""

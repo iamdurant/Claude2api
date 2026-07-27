@@ -143,8 +143,9 @@ type ContentBlock struct {
 
 // ClaudeCompletionDelta from content_block_delta event
 type ClaudeCompletionDelta struct {
-	Type string `json:"type"` // "text_delta"
-	Text string `json:"text"`
+	Type    string `json:"type"` // "text_delta" | "thinking_delta"
+	Text    string `json:"text,omitempty"`
+	Thinking string `json:"thinking,omitempty"`
 }
 
 // MessageDeltaPayload from message_delta event (final stop info)

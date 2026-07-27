@@ -32,7 +32,7 @@ func (h *Handler) Responses(c *gin.Context) {
 	}
 
 	prompt := buildResponsesPrompt(req)
-	effort := "medium"
+	effort := resolveEffort(h.cfg.Effort)
 
 	if req.Stream {
 		h.responsesStream(c, client, prompt, claudeModel, effort, req.ConversationID)
@@ -112,7 +112,7 @@ func flattenContentParts(parts []interface{}) string {
 }
 
 func (h *Handler) responsesNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
-	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil)
+	_, content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil, nil)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
@@ -171,7 +171,7 @@ func (h *Handler) responsesStream(c *gin.Context, client *claude.Client, prompt,
 	})
 
 	var full strings.Builder
-	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
+	_, _, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
 		full.WriteString(text)
 		writeSSE(c.Writer, models.ResponsesOutputTextDelta{
 			Type: "response.output_text.delta", ItemID: msgID, OutputIndex: 0, ContentIndex: 0, Delta: text,
@@ -179,7 +179,7 @@ func (h *Handler) responsesStream(c *gin.Context, client *claude.Client, prompt,
 		if flusher != nil {
 			flusher.Flush()
 		}
-	})
+	}, nil)
 
 	writeSSE(c.Writer, models.ResponsesContentPartDone{
 		Type: "response.content_part.done", ItemID: msgID, OutputIndex: 0, ContentIndex: 0,

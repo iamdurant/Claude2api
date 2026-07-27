@@ -40,6 +40,40 @@ func resolveModel(requested, fallback string) (string, error) {
 	return m, nil
 }
 
+// resolveEffort validates an effort string and returns a claude.ai-safe value.
+func resolveEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "low", "medium", "high", "xhigh", "max":
+		return strings.ToLower(strings.TrimSpace(effort))
+	default:
+		return "medium"
+	}
+}
+
+// resolveThinking maps Claude Code's thinking config to claude.ai's thinking_mode.
+// Claude Code sends {"type":"enabled","budget_tokens":N} or {"type":"disabled"}.
+// claude.ai accepts "auto" | "none". We also return the budget for potential
+// future use (claude.ai web does not expose a budget knob).
+func resolveThinking(thinking interface{}) (thinkingMode string, budgetTokens int) {
+	if thinking == nil {
+		return "auto", 0
+	}
+	m, ok := thinking.(map[string]interface{})
+	if !ok {
+		return "auto", 0
+	}
+	typ, _ := m["type"].(string)
+	switch typ {
+	case "disabled":
+		return "none", 0
+	case "enabled":
+		budget, _ := m["budget_tokens"].(float64)
+		return "auto", int(budget)
+	default:
+		return "auto", 0
+	}
+}
+
 // newClient builds a claude.ai client from the session key in context
 func (h *Handler) newClient(c *gin.Context) (*claude.Client, error) {
 	sessionKey, _ := c.Get("sessionKey")
@@ -49,9 +83,12 @@ func (h *Handler) newClient(c *gin.Context) (*claude.Client, error) {
 
 // runCompletion drives a full claude.ai round-trip: create conversation, send
 // prompt, then invoke onText for each incremental text delta.
-// Returns the full accumulated text or an error.
+// Returns the accumulated thinking text, the accumulated text, or an error.
+// When tools is nil, the default claude.ai web tools are sent; pass an empty
+// slice (or custom payload) to override — used by the tool-simulation loop.
+// thinking overrides the proxy-level thinking config (e.g. from request body).
 func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string,
-	onText func(text string)) (string, error) {
+	onText func(text string), tools []json.RawMessage, thinkingOverride ...string) (string, string, error) {
 
 	convID := ""
 	persistent := conversationID != ""
@@ -63,7 +100,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		} else {
 			createdID, err := client.CreateConversation(ctx, "chat")
 			if err != nil {
-				return "", fmt.Errorf("create conversation: %w", err)
+				return "", "", fmt.Errorf("create conversation: %w", err)
 			}
 			convID = createdID
 			state = &conversationState{ClientConversationID: conversationID, ClaudeConversationID: convID}
@@ -72,7 +109,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 	} else {
 		createdID, err := client.CreateConversation(ctx, "chat")
 		if err != nil {
-			return "", fmt.Errorf("create conversation: %w", err)
+			return "", "", fmt.Errorf("create conversation: %w", err)
 		}
 		convID = createdID
 		defer func() {
@@ -89,6 +126,19 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		parentUUID = state.LastAssistantUUID
 	}
 
+	// Thinking: per-request override (from Claude Code's request body) wins,
+	// else fall back to proxy-level config.
+	thinkingMode, _ := resolveThinking(h.cfg.Thinking)
+	if len(thinkingOverride) > 0 && thinkingOverride[0] != "" {
+		thinkingMode = thinkingOverride[0]
+	}
+
+	// Choose tools payload: caller override, or default web tools.
+	toolsPayload := claude.WebTools()
+	if len(tools) > 0 {
+		toolsPayload = tools[0]
+	}
+
 	// Build the real request body matching claude.ai's format
 	req := &models.ClaudeCompletionRequest{
 		Prompt:            prompt,
@@ -97,8 +147,8 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		Locale:            h.cfg.Locale,
 		Model:             claudeModel,
 		Effort:            effort,
-		ThinkingMode:      "auto",
-		Tools:             claude.WebTools(),
+		ThinkingMode:      thinkingMode,
+		Tools:             toolsPayload,
 		TurnMessageUUIDs: &models.TurnMessageUUIDs{
 			HumanMessageUUID:     humanUUID,
 			AssistantMessageUUID: assistantUUID,
@@ -121,16 +171,20 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 
 	events, err := client.SendMessage(ctx, convID, req)
 	if err != nil {
-		return "", fmt.Errorf("send message: %w", err)
+		return "", "", fmt.Errorf("send message: %w", err)
 	}
 
-	var sb strings.Builder
+	var thinkingBuf, sb strings.Builder
 	for evt := range events {
 		if evt.Error != nil {
-			return sb.String(), fmt.Errorf("upstream: %s", evt.Error.Message)
+			return thinkingBuf.String(), sb.String(), fmt.Errorf("upstream: %s", evt.Error.Message)
 		}
-		text := claude.ExtractTextFromSSE(evt)
-		if text != "" {
+		// Capture thinking blocks.
+		if t := claude.ExtractThinkingFromSSE(evt); t != "" {
+			thinkingBuf.WriteString(t)
+		}
+		// Capture text blocks.
+		if text := claude.ExtractTextFromSSE(evt); text != "" {
 			sb.WriteString(text)
 			if onText != nil {
 				onText(text)
@@ -143,7 +197,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 	if persistent {
 		h.conversations.touch(conversationID, humanUUID, assistantUUID)
 	}
-	return sb.String(), nil
+	return thinkingBuf.String(), sb.String(), nil
 }
 
 // writeSSE writes a "data: {...}\n\n" SSE line

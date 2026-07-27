@@ -1,6 +1,10 @@
 package config
 
-import "os"
+import (
+	"encoding/json"
+	"os"
+	"strings"
+)
 
 // Config holds application configuration
 type Config struct {
@@ -11,6 +15,8 @@ type Config struct {
 	Timezone      string
 	Locale        string
 	DefaultModel  string
+	Effort        string
+	Thinking      interface{}
 }
 
 // New creates a Config from environment variables with sane defaults
@@ -32,13 +38,29 @@ func New() *Config {
 
 	locale := os.Getenv("CLAUDE_LOCALE")
 	if locale == "" {
-		locale = "en-US"
+	locale = "en-US"
 	}
 
 	timezone := os.Getenv("CLAUDE_TIMEZONE")
 	if timezone == "" {
 		timezone = "Asia/Singapore"
 	}
+
+	// CLAUDE_CODE_EFFORT_LEVEL is the env var Claude Code reads; support it so
+	// the same knob controls both. CLAUDE_EFFORT is the native override.
+	effort := os.Getenv("CLAUDE_EFFORT")
+	if effort == "" {
+		effort = os.Getenv("CLAUDE_CODE_EFFORT_LEVEL")
+	}
+	if effort == "" {
+		effort = "medium"
+	}
+
+	// CLAUDE_THINKING accepts: "auto" (default), "none", or a JSON object like
+	// {"type":"enabled","budget_tokens":10000}. It is the proxy-level default;
+	// per-request "thinking" from Claude Code overrides it.
+	thinkingRaw := os.Getenv("CLAUDE_THINKING")
+	thinking := parseThinkingEnv(thinkingRaw)
 
 	return &Config{
 		Port:          port,
@@ -48,7 +70,30 @@ func New() *Config {
 		Timezone:      timezone,
 		Locale:        locale,
 		DefaultModel:  model,
+		Effort:        effort,
+		Thinking:      thinking,
 	}
+}
+
+// parseThinkingEnv parses the CLAUDE_THINKING env var into a value suitable for
+// Config.Thinking. Returns nil (auto), "none", or a map for enabled.
+func parseThinkingEnv(s string) interface{} {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	lower := strings.ToLower(s)
+	if lower == "none" || lower == "disabled" {
+		return map[string]interface{}{"type": "disabled"}
+	}
+	if lower != "auto" && lower != "enabled" {
+		// Try JSON.
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(s), &m); err == nil {
+			return m
+		}
+	}
+	return map[string]interface{}{"type": "enabled", "budget_tokens": 10000}
 }
 
 // SupportedModels is the set of models exposed by the API

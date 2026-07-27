@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"claude2api/claude"
@@ -35,7 +36,7 @@ func (h *Handler) ChatCompletion(c *gin.Context) {
 	}
 
 	prompt := claude.BuildPrompt(req.Messages)
-	effort := "medium"
+	effort := resolveEffort(h.cfg.Effort)
 
 	if req.Stream {
 		h.chatCompletionStream(c, client, prompt, claudeModel, effort, req.ConversationID)
@@ -45,7 +46,7 @@ func (h *Handler) ChatCompletion(c *gin.Context) {
 }
 
 func (h *Handler) chatCompletionNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
-	content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil)
+	_, content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil, nil)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
@@ -86,7 +87,9 @@ func (h *Handler) chatCompletionStream(c *gin.Context, client *claude.Client, pr
 		flusher.Flush()
 	}
 
-	_, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
+	var full strings.Builder
+	_, _, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
+		full.WriteString(text)
 		writeSSE(c.Writer, models.ChatCompletionChunk{
 			ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: claudeModel,
 			Choices: []models.ChunkChoice{{Index: 0, Delta: models.Delta{Content: text}}},
@@ -94,7 +97,7 @@ func (h *Handler) chatCompletionStream(c *gin.Context, client *claude.Client, pr
 		if flusher != nil {
 			flusher.Flush()
 		}
-	})
+	}, nil)
 	if err != nil {
 		writeSSE(c.Writer, models.ChatCompletionChunk{
 			ID: chunkID, Object: "chat.completion.chunk", Created: created, Model: claudeModel,
