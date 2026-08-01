@@ -13,6 +13,9 @@ It reverse-proxies requests to `https://claude.ai` using a browser-like TLS/clie
 - Streaming and non-streaming responses
 - Persistent `conversation_id` mode for multi-turn conversation continuity
 - Browser Cookie mode to match a real claude.ai browser session
+- Multi-account pool via `accounts.txt`, routed by the lowest active request count
+- Account-scoped TLS client, CookieJar, browser identity, and organization cache reuse
+- Persistent conversations isolated by account, with concurrent turns serialized per `conversation_id`
 - Bearer session key mode for simple local use
 - Dedicated local `tlsclient` module wrapping the Chrome-profile `github.com/bogdanfinn/tls-client` client, CookieJar, and common browser headers
 - Completion requests include the claude.ai web `tools` payload reverse-engineered from a real browser request
@@ -64,6 +67,7 @@ The service is configured with environment variables.
 | `CLAUDE_BASE_URL` | `https://claude.ai` | Upstream claude.ai base URL. |
 | `CLAUDE_SESSION_KEY` | empty | Optional claude.ai `sessionKey`. If set, API requests do not need a Bearer token. |
 | `CLAUDE_COOKIE` | empty | Optional full browser Cookie header from claude.ai. Recommended when you want behavior closest to the browser. |
+| `CLAUDE_ACCOUNTS_FILE` | `accounts.txt` | Multi-account file; one session key or full Cookie header per line. |
 | `CLAUDE_TIMEZONE` | `Asia/Singapore` | Timezone sent to claude.ai completion requests. |
 | `CLAUDE_LOCALE` | `en-US` | Locale sent to claude.ai completion requests. |
 | `DEFAULT_MODEL` | `claude-sonnet-5` | Model used when a request omits `model`. Must be one of the supported models. |
@@ -103,6 +107,15 @@ Full browser Cookie mode:
 ```bash
 CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' PORT=8080 ./claude2api.exe
 ```
+
+Multi-account mode: create `accounts.txt` in the working directory, with one session key or full Cookie header per line. Blank lines and `#` comments are ignored:
+
+```text
+sk-ant-sid01-...
+sessionKey=sk-ant-sid02-...; sessionKeyLC=...; anthropic-device-id=...; ...
+```
+
+Use `CLAUDE_ACCOUNTS_FILE` to select another path. Requests without explicit authentication headers are routed to the least-loaded configured account; requests with `Authorization` or `X-Claude-Cookie` remain pinned to those credentials.
 
 Then use the local base URL:
 
@@ -188,7 +201,7 @@ See [API_EN.md](API_EN.md) for endpoint details and examples.
 
 ## Notes
 
-- The proxy creates a temporary claude.ai conversation for each completion and deletes it after the request.
+- Without `conversation_id`, the proxy creates a temporary claude.ai conversation for each completion and asynchronously deletes it after the response.
 - Token usage values are approximate and currently based on output text length.
 - If browser and Bearer modes behave differently, prefer full Cookie mode because it carries the same request environment as the browser.
 - A `429` response is returned by claude.ai when the upstream account/session is rate-limited.

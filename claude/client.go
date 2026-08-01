@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"claude2api/models"
@@ -24,6 +25,7 @@ type Client struct {
 	baseURL           string
 	sessionKey        string
 	claudeCookie      string
+	orgMu             sync.Mutex
 	orgID             string // cached org UUID
 	deviceID          string // anthropic-device-id
 	sessionKeyLC      string
@@ -205,9 +207,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		req.AddCookie(&http.Cookie{Name: "_gcl_au", Value: c.gclAU})
 		req.AddCookie(&http.Cookie{Name: "ion-vk", Value: c.ionVK})
 		req.AddCookie(&http.Cookie{Name: "_dd_s", Value: c.generatedDDSCookie()})
-		if c.orgID != "" {
-			req.AddCookie(&http.Cookie{Name: "lastActiveOrg", Value: c.orgID})
-		}
 	}
 
 	return c.httpClient.Do(req)
@@ -215,6 +214,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 
 // GetOrganization fetches the user's organization UUID
 func (c *Client) GetOrganization(ctx context.Context) (string, error) {
+	c.orgMu.Lock()
+	defer c.orgMu.Unlock()
 	if c.orgID != "" {
 		return c.orgID, nil
 	}
@@ -328,7 +329,7 @@ func (c *Client) SendMessage(ctx context.Context, convID string, req *models.Cla
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 2*1024*1024), 2*1024*1024)
+		scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
 
 		var eventType, data string
 		for scanner.Scan() {
@@ -342,7 +343,11 @@ func (c *Client) SendMessage(ctx context.Context, convID string, req *models.Cla
 
 			if line == "" {
 				if data != "" {
-					events <- parseCompletionEvent(eventType, data)
+					select {
+					case events <- parseCompletionEvent(eventType, data):
+					case <-ctx.Done():
+						return
+					}
 				}
 				eventType = ""
 				data = ""
@@ -361,7 +366,11 @@ func (c *Client) SendMessage(ctx context.Context, convID string, req *models.Cla
 		}
 
 		if data != "" {
-			events <- parseCompletionEvent(eventType, data)
+			select {
+			case events <- parseCompletionEvent(eventType, data):
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 

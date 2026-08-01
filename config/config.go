@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"strings"
@@ -17,6 +18,14 @@ type Config struct {
 	DefaultModel  string
 	Effort        string
 	Thinking      interface{}
+	Accounts      []Account
+}
+
+// Account contains credentials for one claude.ai account. Cookie may contain
+// the full browser Cookie header; SessionKey is used for Bearer-only mode.
+type Account struct {
+	SessionKey string
+	Cookie     string
 }
 
 // New creates a Config from environment variables with sane defaults
@@ -38,7 +47,7 @@ func New() *Config {
 
 	locale := os.Getenv("CLAUDE_LOCALE")
 	if locale == "" {
-	locale = "en-US"
+		locale = "en-US"
 	}
 
 	timezone := os.Getenv("CLAUDE_TIMEZONE")
@@ -62,17 +71,77 @@ func New() *Config {
 	thinkingRaw := os.Getenv("CLAUDE_THINKING")
 	thinking := parseThinkingEnv(thinkingRaw)
 
+	sessionKey := os.Getenv("CLAUDE_SESSION_KEY")
+	claudeCookie := os.Getenv("CLAUDE_COOKIE")
+	accounts := loadAccounts(os.Getenv("CLAUDE_ACCOUNTS_FILE"), sessionKey, claudeCookie)
+
 	return &Config{
 		Port:          port,
 		ClaudeBaseURL: baseURL,
-		SessionKey:    os.Getenv("CLAUDE_SESSION_KEY"),
-		ClaudeCookie:  os.Getenv("CLAUDE_COOKIE"),
+		SessionKey:    sessionKey,
+		ClaudeCookie:  claudeCookie,
 		Timezone:      timezone,
 		Locale:        locale,
 		DefaultModel:  model,
 		Effort:        effort,
 		Thinking:      thinking,
+		Accounts:      accounts,
 	}
+}
+
+func loadAccounts(path, fallbackSessionKey, fallbackCookie string) []Account {
+	if strings.TrimSpace(path) == "" {
+		path = "accounts.txt"
+	}
+
+	accounts := make([]Account, 0)
+	seen := make(map[string]struct{})
+	add := func(account Account) {
+		account.SessionKey = strings.TrimSpace(account.SessionKey)
+		account.Cookie = strings.TrimSpace(account.Cookie)
+		if account.SessionKey == "" {
+			account.SessionKey = sessionKeyFromCookie(account.Cookie)
+		}
+		if account.SessionKey == "" {
+			return
+		}
+		key := account.SessionKey + "\x00" + account.Cookie
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		accounts = append(accounts, account)
+	}
+
+	if f, err := os.Open(path); err == nil {
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.Contains(line, "sessionKey=") {
+				add(Account{Cookie: line})
+			} else {
+				add(Account{SessionKey: line})
+			}
+		}
+	}
+
+	add(Account{SessionKey: fallbackSessionKey, Cookie: fallbackCookie})
+	return accounts
+}
+
+func sessionKeyFromCookie(cookie string) string {
+	for _, part := range strings.Split(cookie, ";") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) == 2 && kv[0] == "sessionKey" {
+			return kv[1]
+		}
+	}
+	return ""
 }
 
 // parseThinkingEnv parses the CLAUDE_THINKING env var into a value suitable for

@@ -15,29 +15,31 @@ func BearerAuth(envSessionKey string) gin.HandlerFunc {
 }
 
 // BrowserAuth accepts a sessionKey plus an optional full claude.ai Cookie header.
-func BrowserAuth(envSessionKey, envClaudeCookie string) gin.HandlerFunc {
+func BrowserAuth(envSessionKey, envClaudeCookie string, accountPool ...bool) gin.HandlerFunc {
+	hasAccountPool := len(accountPool) > 0 && accountPool[0]
 	return func(c *gin.Context) {
-		// Extract Bearer token from Authorization header
+		// Request-scoped credentials are a pair: never combine an explicit Bearer
+		// token with the environment Cookie (or the reverse), as that mixes accounts.
 		authHeader := c.GetHeader("Authorization")
 		var token string
 		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimPrefix(authHeader, "Bearer ")
+			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		}
+		cookie := strings.TrimSpace(c.GetHeader("X-Claude-Cookie"))
+		explicitCredentials := token != "" || cookie != ""
+		if explicitCredentials {
+			if token == "" {
+				token = sessionKeyFromCookie(cookie)
+			}
+		} else {
+			token = strings.TrimSpace(envSessionKey)
+			cookie = strings.TrimSpace(envClaudeCookie)
+			if token == "" {
+				token = sessionKeyFromCookie(cookie)
+			}
 		}
 
-		// If env session key is set, use it as fallback
-		if token == "" && envSessionKey != "" {
-			token = envSessionKey
-		}
-
-		cookie := c.GetHeader("X-Claude-Cookie")
-		if cookie == "" {
-			cookie = envClaudeCookie
-		}
-		if token == "" {
-			token = sessionKeyFromCookie(cookie)
-		}
-
-		if token == "" {
+		if token == "" && !hasAccountPool {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": gin.H{
 					"message": "Missing API key. Provide via Authorization: Bearer <sessionKey> or X-Claude-Cookie",
@@ -50,6 +52,7 @@ func BrowserAuth(envSessionKey, envClaudeCookie string) gin.HandlerFunc {
 		// Store in context for downstream handlers
 		c.Set("sessionKey", token)
 		c.Set("claudeCookie", cookie)
+		c.Set("explicitCredentials", explicitCredentials)
 		c.Next()
 	}
 }

@@ -21,11 +21,22 @@ import (
 type Handler struct {
 	cfg           *config.Config
 	conversations *conversationStore
+	clients       *clientPool
+	deleteSlots   chan struct{}
 }
 
-// NewHandler creates a handler
+// NewHandler creates a handler.
 func NewHandler(cfg *config.Config) *Handler {
-	return &Handler{cfg: cfg, conversations: newConversationStore()}
+	clients, err := newClientPool(cfg.ClaudeBaseURL, cfg.Accounts)
+	if err != nil {
+		panic(err)
+	}
+	return &Handler{
+		cfg:           cfg,
+		conversations: newConversationStore(),
+		clients:       clients,
+		deleteSlots:   make(chan struct{}, 32),
+	}
 }
 
 // resolveModel returns the claude.ai model id for a requested model, or an error
@@ -74,11 +85,27 @@ func resolveThinking(thinking interface{}) (thinkingMode string, budgetTokens in
 	}
 }
 
-// newClient builds a claude.ai client from the session key in context
-func (h *Handler) newClient(c *gin.Context) (*claude.Client, error) {
+// acquireClient returns a reusable account client and a release callback.
+func (h *Handler) acquireClient(c *gin.Context, conversationID string) (*clientLease, error) {
 	sessionKey, _ := c.Get("sessionKey")
 	claudeCookie, _ := c.Get("claudeCookie")
-	return claude.NewClient(h.cfg.ClaudeBaseURL, sessionKey.(string), claudeCookie.(string))
+	explicitCredentials, _ := c.Get("explicitCredentials")
+	return h.clients.acquire(sessionKey.(string), claudeCookie.(string), explicitCredentials == true, conversationID)
+}
+
+func (h *Handler) deleteTemporaryConversation(client *claude.Client, conversationID string) {
+	select {
+	case h.deleteSlots <- struct{}{}:
+		go func() {
+			defer func() { <-h.deleteSlots }()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = client.DeleteConversation(ctx, conversationID)
+		}()
+	default:
+		// Cleanup is best-effort. Under a burst, do not create an unbounded number
+		// of goroutines or hold response handlers open waiting for delete capacity.
+	}
 }
 
 // runCompletion drives a full claude.ai round-trip: create conversation, send
@@ -87,36 +114,34 @@ func (h *Handler) newClient(c *gin.Context) (*claude.Client, error) {
 // When tools is nil, the default claude.ai web tools are sent; pass an empty
 // slice (or custom payload) to override — used by the tool-simulation loop.
 // thinking overrides the proxy-level thinking config (e.g. from request body).
-func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string,
+func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prompt, claudeModel, effort, conversationID, accountID string,
 	onText func(text string), tools []json.RawMessage, thinkingOverride ...string) (string, string, error) {
 
 	convID := ""
 	persistent := conversationID != ""
 	var state *conversationState
 	if persistent {
-		if existing, ok := h.conversations.get(conversationID); ok {
-			state = existing
-			convID = existing.ClaudeConversationID
-		} else {
+		var created bool
+		var release func()
+		state, created, release = h.conversations.acquire(accountID, conversationID)
+		defer release()
+		if created {
 			createdID, err := client.CreateConversation(ctx, "chat")
 			if err != nil {
+				h.conversations.removeIfSame(state)
 				return "", "", fmt.Errorf("create conversation: %w", err)
 			}
-			convID = createdID
-			state = &conversationState{ClientConversationID: conversationID, ClaudeConversationID: convID}
-			h.conversations.set(state)
+			state.ClaudeConversationID = createdID
+			state.UpdatedAt = time.Now()
 		}
+		convID = state.ClaudeConversationID
 	} else {
 		createdID, err := client.CreateConversation(ctx, "chat")
 		if err != nil {
 			return "", "", fmt.Errorf("create conversation: %w", err)
 		}
 		convID = createdID
-		defer func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = client.DeleteConversation(bgCtx, convID)
-			cancel()
-		}()
+		defer h.deleteTemporaryConversation(client, convID)
 	}
 
 	humanUUID := utils.GenerateUUID()
@@ -195,7 +220,9 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		}
 	}
 	if persistent {
-		h.conversations.touch(conversationID, humanUUID, assistantUUID)
+		state.LastHumanUUID = humanUUID
+		state.LastAssistantUUID = assistantUUID
+		state.UpdatedAt = time.Now()
 	}
 	return thinkingBuf.String(), sb.String(), nil
 }

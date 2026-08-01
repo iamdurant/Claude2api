@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"claude2api/claude"
 	"claude2api/models"
@@ -36,11 +35,12 @@ func (h *Handler) AnthropicMessages(c *gin.Context) {
 		return
 	}
 
-	client, err := h.newClient(c)
+	lease, err := h.acquireClient(c, req.ConversationID)
 	if err != nil {
 		internalError(c, "create client: "+err.Error())
 		return
 	}
+	defer lease.release()
 
 	effort := resolveEffort(h.cfg.Effort)
 
@@ -48,18 +48,18 @@ func (h *Handler) AnthropicMessages(c *gin.Context) {
 	// simulates native tool calling over claude.ai's text-only interface.
 	if len(req.ToolDefs) > 0 {
 		if req.Stream {
-			h.anthropicToolStream(c, client, req, claudeModel, effort)
+			h.anthropicToolStream(c, lease.client, req, claudeModel, effort, lease.accountID)
 		} else {
-			h.anthropicToolNonStream(c, client, req, claudeModel, effort)
+			h.anthropicToolNonStream(c, lease.client, req, claudeModel, effort, lease.accountID)
 		}
 		return
 	}
 
 	prompt := buildAnthropicPrompt(req)
 	if req.Stream {
-		h.anthropicStream(c, client, prompt, claudeModel, effort, req.ConversationID)
+		h.anthropicStream(c, lease.client, prompt, claudeModel, effort, req.ConversationID, lease.accountID)
 	} else {
-		h.anthropicNonStream(c, client, prompt, claudeModel, effort, req.ConversationID)
+		h.anthropicNonStream(c, lease.client, prompt, claudeModel, effort, req.ConversationID, lease.accountID)
 	}
 }
 
@@ -132,8 +132,8 @@ func anthropicContentToString(content interface{}) string {
 	}
 }
 
-func (h *Handler) anthropicNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
-	_, content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, nil, nil)
+func (h *Handler) anthropicNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID, accountID string) {
+	_, content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, accountID, nil, nil)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
@@ -155,8 +155,8 @@ func (h *Handler) anthropicNonStream(c *gin.Context, client *claude.Client, prom
 // cacheUsage computes cache creation/read token counts for a request and
 // merges them into the given usage. Pure-text (non-tool) requests have no
 // cache_control blocks, so this is effectively a no-op there.
-func cacheUsage(conversationID string, req models.AnthropicRequest, usage models.AnthropicUsage) models.AnthropicUsage {
-	creation, read := globalCacheTracker.record(conversationID, req)
+func cacheUsage(accountID, conversationID string, req models.AnthropicRequest, usage models.AnthropicUsage) models.AnthropicUsage {
+	creation, read := globalCacheTracker.record(accountID+"|"+conversationID, req)
 	usage.CacheCreationInputTokens = creation
 	usage.CacheReadInputTokens = read
 	// InputTokens is already populated by runToolLoop from real prompt sizes.
@@ -187,7 +187,7 @@ func messagesTokens(messages []models.AnthropicMessage) int {
 	return total
 }
 
-func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID string) {
+func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID, accountID string) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -217,7 +217,7 @@ func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt,
 	})
 
 	var outputChars int
-	_, _, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, func(text string) {
+	_, _, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, accountID, func(text string) {
 		outputChars += len(text)
 		writeSSE(c.Writer, models.AnthropicStreamContentBlockDelta{
 			Type:  "content_block_delta",
@@ -253,13 +253,13 @@ func (h *Handler) anthropicStream(c *gin.Context, client *claude.Client, prompt,
 // -------- tool-use simulation over text-only claude.ai --------
 
 // anthropicToolNonStream runs a tool-use loop and returns a single Anthropic response.
-func (h *Handler) anthropicToolNonStream(c *gin.Context, client *claude.Client, req models.AnthropicRequest, claudeModel, effort string) {
-	blocks, usage, err := h.runToolLoop(c.Request.Context(), client, req, claudeModel, effort)
+func (h *Handler) anthropicToolNonStream(c *gin.Context, client *claude.Client, req models.AnthropicRequest, claudeModel, effort, accountID string) {
+	blocks, usage, err := h.runToolLoop(c.Request.Context(), client, req, claudeModel, effort, accountID)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
 	}
-	usage = cacheUsage(req.ConversationID, req, usage)
+	usage = cacheUsage(accountID, req.ConversationID, req, usage)
 	resp := models.AnthropicResponse{
 		ID:         genID("msg_"),
 		Type:       "message",
@@ -274,13 +274,13 @@ func (h *Handler) anthropicToolNonStream(c *gin.Context, client *claude.Client, 
 
 // anthropicToolStream runs a tool-use loop, then streams the final text back
 // chunk-by-chunk so Claude Code sees a streaming response.
-func (h *Handler) anthropicToolStream(c *gin.Context, client *claude.Client, req models.AnthropicRequest, claudeModel, effort string) {
-	blocks, usage, err := h.runToolLoop(c.Request.Context(), client, req, claudeModel, effort)
+func (h *Handler) anthropicToolStream(c *gin.Context, client *claude.Client, req models.AnthropicRequest, claudeModel, effort, accountID string) {
+	blocks, usage, err := h.runToolLoop(c.Request.Context(), client, req, claudeModel, effort, accountID)
 	if err != nil {
 		upstreamError(c, err.Error())
 		return
 	}
-	usage = cacheUsage(req.ConversationID, req, usage)
+	usage = cacheUsage(accountID, req.ConversationID, req, usage)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -373,7 +373,6 @@ func streamText(w io.Writer, text string, index int, flusher http.Flusher) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-		time.Sleep(15 * time.Millisecond)
 	}
 }
 
@@ -397,7 +396,7 @@ func chunkString(s string, n int) []string {
 // runToolLoop drives the multi-round conversation with claude.ai, injecting tool
 // definitions into the prompt and executing any tool calls the model embeds in
 // its text response.
-func (h *Handler) runToolLoop(ctx context.Context, client *claude.Client, req models.AnthropicRequest, claudeModel, effort string) ([]models.AnthropicContentBlock, models.AnthropicUsage, error) {
+func (h *Handler) runToolLoop(ctx context.Context, client *claude.Client, req models.AnthropicRequest, claudeModel, effort, accountID string) ([]models.AnthropicContentBlock, models.AnthropicUsage, error) {
 	toolDefText := buildToolDefsPrompt(req.ToolDefs)
 	emptyTools := json.RawMessage([]byte("[]"))
 
@@ -420,7 +419,7 @@ func (h *Handler) runToolLoop(ctx context.Context, client *claude.Client, req mo
 		prompt := buildToolPrompt(system, messages, toolDefText)
 		totalInputChars += len(prompt)
 
-		roundThinking, content, err := h.runCompletion(ctx, client, prompt, claudeModel, effort, req.ConversationID, nil, []json.RawMessage{emptyTools}, thinkingMode)
+		roundThinking, content, err := h.runCompletion(ctx, client, prompt, claudeModel, effort, req.ConversationID, accountID, nil, []json.RawMessage{emptyTools}, thinkingMode)
 		if err != nil {
 			return allBlocks, models.AnthropicUsage{}, err
 		}

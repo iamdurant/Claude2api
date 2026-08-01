@@ -36,7 +36,7 @@ func main() {
 
 	// OpenAI-compatible endpoints
 	v1 := r.Group("/v1")
-	v1.Use(middleware.BrowserAuth(cfg.SessionKey, cfg.ClaudeCookie))
+	v1.Use(middleware.BrowserAuth(cfg.SessionKey, cfg.ClaudeCookie, len(cfg.Accounts) > 0))
 	{
 		v1.GET("/models", h.ListModels)
 		v1.POST("/chat/completions", h.ChatCompletion)
@@ -54,8 +54,10 @@ func main() {
 		log.Printf("claude2api listening on :%s", cfg.Port)
 		log.Printf("  Base URL : %s", cfg.ClaudeBaseURL)
 		log.Printf("  Models   : %d", len(config.SupportedModels))
-		if cfg.SessionKey != "" {
-			log.Printf("  Auth     : env session key configured")
+		if len(cfg.Accounts) > 1 {
+			log.Printf("  Accounts : %d configured, least-loaded routing enabled", len(cfg.Accounts))
+		} else if len(cfg.Accounts) == 1 {
+			log.Printf("  Auth     : one configured account")
 		} else {
 			log.Printf("  Auth     : per-request Bearer token required")
 		}

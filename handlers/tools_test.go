@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,7 @@ func TestToolBashAndRead(t *testing.T) {
 	}
 
 	// Write then Read
+	defer os.Remove("test_tool_tmp.txt")
 	executeTool("Write", map[string]interface{}{"file_path": "test_tool_tmp.txt", "content": "line1\nline2"})
 	out = executeTool("Read", map[string]interface{}{"file_path": "test_tool_tmp.txt"})
 	if !strings.Contains(out, "line1") {
@@ -146,13 +148,13 @@ func TestCollectCacheBlocks(t *testing.T) {
 
 func TestResolveEffort(t *testing.T) {
 	cases := map[string]string{
-		"low":    "low",
-		"medium": "medium",
-		"high":   "high",
-		"xhigh":  "xhigh",
-		"max":    "max",
-		"HIGH":   "high",
-		"  max ": "max",
+		"low":     "low",
+		"medium":  "medium",
+		"high":    "high",
+		"xhigh":   "xhigh",
+		"max":     "max",
+		"HIGH":    "high",
+		"  max ":  "max",
 		"invalid": "medium",
 		"":        "medium",
 	}

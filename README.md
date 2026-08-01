@@ -18,6 +18,9 @@
 - 支持非流式与 SSE 流式返回
 - 支持 `conversation_id` 持久会话模式，保持多轮对话连续性
 - 支持完整浏览器 Cookie 模式，更接近 claude.ai 浏览器请求环境
+- 支持 `accounts.txt` 多账号池，按当前活跃请求数进行最小负载分发
+- 账号级复用 TLS Client、CookieJar、浏览器身份和组织信息，避免每请求重复初始化
+- 持久会话按账号隔离，并串行化同一 `conversation_id` 的并发轮次，避免会话串扰
 - 支持 Bearer sessionKey 模式，便于本地简单调用
 - Bearer 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递
 - completion 请求会携带从真实浏览器请求逆向得到的 claude.ai web `tools` 字段
@@ -76,6 +79,15 @@ CLAUDE_SESSION_KEY='你的-sessionKey' PORT=8080 ./claude2api.exe
 ```bash
 CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' PORT=8080 ./claude2api.exe
 ```
+
+使用多账号池：在工作目录创建 `accounts.txt`，每行放一个 sessionKey 或一条完整 Cookie，空行和 `#` 注释会被忽略：
+
+```text
+sk-ant-sid01-...
+sessionKey=sk-ant-sid02-...; sessionKeyLC=...; anthropic-device-id=...; ...
+```
+
+也可通过 `CLAUDE_ACCOUNTS_FILE` 指定其他账号文件。未显式携带认证 Header 的请求会从账号池选择当前活跃请求最少的账号；显式传入 `Authorization` 或 `X-Claude-Cookie` 时仍固定使用该账号。
 
 服务地址：
 
@@ -179,6 +191,7 @@ CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' d
 | `CLAUDE_BASE_URL` | `https://claude.ai` | claude.ai 上游地址。 |
 | `CLAUDE_SESSION_KEY` | 空 | claude.ai 的 `sessionKey`。配置后请求端可以不传 Bearer。 |
 | `CLAUDE_COOKIE` | 空 | 从浏览器复制的完整 claude.ai Cookie。推荐用于更接近浏览器环境。 |
+| `CLAUDE_ACCOUNTS_FILE` | `accounts.txt` | 多账号文件路径；每行一个 sessionKey 或完整 Cookie。 |
 | `CLAUDE_TIMEZONE` | `Asia/Singapore` | 发送给 claude.ai 的时区。 |
 | `CLAUDE_LOCALE` | `en-US` | 发送给 claude.ai 的语言区域。 |
 | `DEFAULT_MODEL` | `claude-sonnet-5` | 请求未指定模型时使用的默认模型。必须在支持模型列表内。 |
@@ -242,7 +255,7 @@ X-Claude-Cookie: <从 claude.ai 浏览器请求中复制的完整 Cookie>
 
 ## 注意事项
 
-- 每次 completion 请求都会创建一个临时 claude.ai 会话，请求结束后会尝试删除。
+- 未传 `conversation_id` 时，每次 completion 会创建临时 claude.ai 会话，并在响应完成后异步尝试删除。
 - `usage` 中的 token 数是近似值，目前主要根据输出文本长度估算。
 - 如果 Bearer sessionKey 模式和浏览器行为不一致，建议使用完整 Cookie 模式。
 - 如果上游返回 `429`，说明 claude.ai 当前账号或会话触发了速率限制。

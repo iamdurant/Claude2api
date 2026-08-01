@@ -3,7 +3,7 @@
 .env.*
 captured/
 .claude/
-
+.workbuddy/
 # Binaries
 *.exe
 *.exe~

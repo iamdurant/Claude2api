@@ -13,9 +13,9 @@ import (
 // web endpoint does not expose real caching, so we fingerprint cache_control
 // blocks and report "cache_creation" on first sight and "cache_read" on reuse.
 type cacheTracker struct {
-	mu    sync.Mutex
-	seen  map[string]time.Time // fingerprint -> first seen
-	ttl   time.Duration
+	mu   sync.Mutex
+	seen map[string]time.Time // fingerprint -> first seen
+	ttl  time.Duration
 }
 
 var globalCacheTracker = &cacheTracker{
@@ -33,24 +33,27 @@ func cacheFingerprint(role string, block map[string]interface{}) string {
 // record processes all cache_control blocks in a request and returns the token
 // counts for cache creation and cache read.
 func (t *cacheTracker) record(conversationID string, req models.AnthropicRequest) (creationTokens, readTokens int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.gc()
-
 	blocks := collectCacheBlocks(req)
 	if len(blocks) == 0 {
 		return 0, 0
 	}
+	accountScope := conversationID
+	if accountScope == "" {
+		accountScope = "stateless"
+	}
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.gc()
+	now := time.Now()
 	for _, b := range blocks {
-		fp := b.fp
+		fp := accountScope + "|" + b.fp
 		tokens := b.tokens
 		if _, ok := t.seen[fp]; ok {
 			readTokens += tokens
 		} else {
 			creationTokens += tokens
-			t.seen[fp] = time.Now()
+			t.seen[fp] = now
 		}
 	}
 	return
