@@ -39,16 +39,15 @@ func NewHandler(cfg *config.Config) *Handler {
 	}
 }
 
-// resolveModel returns the claude.ai model id for a requested model, or an error
+// resolveModel leaves availability validation to the web API so new IDs work immediately.
 func resolveModel(requested, fallback string) (string, error) {
 	if requested == "" {
 		requested = fallback
 	}
-	m, ok := config.SupportedModels[requested]
-	if !ok {
-		return "", fmt.Errorf("model '%s' is not supported", requested)
+	if strings.TrimSpace(requested) == "" {
+		return "", fmt.Errorf("model is required")
 	}
-	return m, nil
+	return requested, nil
 }
 
 // resolveEffort validates an effort string and returns a claude.ai-safe value.
@@ -238,16 +237,28 @@ func writeSSE(w io.Writer, payload interface{}) {
 
 // ListModels returns OpenAI-compatible /v1/models
 func (h *Handler) ListModels(c *gin.Context) {
-	data := make([]models.ModelInfo, 0, len(config.SupportedModels))
-	now := time.Now().Unix()
-	for id := range config.SupportedModels {
+	lease, err := h.acquireClient(c, "")
+	if err != nil {
+		internalError(c, "create client: "+err.Error())
+		return
+	}
+	defer lease.release()
+
+	ids, err := lease.client.ListModels(c.Request.Context())
+	if err != nil {
+		upstreamError(c, err.Error())
+		return
+	}
+	data := make([]models.ModelInfo, 0, len(ids))
+	for _, id := range ids {
 		data = append(data, models.ModelInfo{
 			ID:      id,
 			Object:  "model",
-			Created: now,
+			Created: 0,
 			OwnedBy: "anthropic",
 		})
 	}
+	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, models.ModelsResponse{Object: "list", Data: data})
 }
 

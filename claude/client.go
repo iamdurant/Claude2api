@@ -40,7 +40,7 @@ type Client struct {
 	createdAtMS       int64
 }
 
-// NewClient creates a new claude.ai API client using Chrome 146 TLS fingerprint
+// NewClient creates a new claude.ai API client using Chrome 152 TLS fingerprint
 func NewClient(baseURL, sessionKey string, claudeCookie ...string) (*Client, error) {
 	cookie := ""
 	if len(claudeCookie) > 0 {

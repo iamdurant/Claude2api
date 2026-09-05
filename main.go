@@ -53,7 +53,7 @@ func main() {
 	go func() {
 		log.Printf("claude2api listening on :%s", cfg.Port)
 		log.Printf("  Base URL : %s", cfg.ClaudeBaseURL)
-		log.Printf("  Models   : %d", len(config.SupportedModels))
+		log.Printf("  Models   : fetched from claude.ai per request")
 		if len(cfg.Accounts) > 1 {
 			log.Printf("  Accounts : %d configured, least-loaded routing enabled", len(cfg.Accounts))
 		} else if len(cfg.Accounts) == 1 {

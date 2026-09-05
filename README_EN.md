@@ -27,18 +27,11 @@ Image endpoints such as `/v1/images/generations`, `/v1/images/edits`, and `/v1/i
 
 ## Supported Models
 
-Only these model IDs are accepted and returned by `/v1/models`:
+`GET /v1/models` reads `claude_ai_available_models.models[].model_id` from `/edge-api/bootstrap/{org_id}/app_start` on every request, using the selected account's browser credentials instead of a fixed model list.
 
-- `claude-fable-5`
-- `claude-opus-4-8`
-- `claude-haiku-4-5`
-- `claude-opus-4-7`
-- `claude-opus-4-6`
-- `claude-opus-3`
-- `claude-sonnet-4-6`
-- `claude-sonnet-5`
+IDs are deduplicated in upstream order. Upstream failures or responses without models return `502`; there is no static fallback. With multiple accounts, the response belongs to the selected account; explicit Bearer or `X-Claude-Cookie` credentials pin the lookup. Completion model IDs are passed through for upstream validation; omitted IDs still use `DEFAULT_MODEL`.
 
-Requests using any other model return an `invalid_request_error`.
+The new HAR confirms a 200 response for this read-only GET. Requests use the captured query `statsig_hashing_algorithm=djb2&growthbook_format=sdk&cache_bust=1&include_system_prompts=false` and never change the model selector. This is a web model catalog, including models requiring higher subscription tiers; listing a model does not guarantee the account can use it.
 
 ## Requirements
 

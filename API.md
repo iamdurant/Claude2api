@@ -39,7 +39,7 @@ X-Claude-Cookie: <完整 claude.ai 浏览器 Cookie>
 
 | 状态码 | 说明 |
 | --- | --- |
-| `400` | 请求体无效或模型不支持。 |
+| `400` | 请求体无效或缺少模型。 |
 | `401` | 缺少 sessionKey 或浏览器 Cookie。 |
 | `502` | 上游 claude.ai 请求失败。 |
 
@@ -47,7 +47,9 @@ X-Claude-Cookie: <完整 claude.ai 浏览器 Cookie>
 
 ### `GET /v1/models`
 
-返回当前支持的模型列表。
+每次使用选中账号的浏览器凭据，通过 GET 读取 `/edge-api/bootstrap/{org_id}/app_start?statsig_hashing_algorithm=djb2&growthbook_format=sdk&cache_bust=1&include_system_prompts=false`，将 `claude_ai_available_models.models[].model_id` 去重后返回。无静态回退；上游失败、结构不匹配或空列表返回 `502`。`created` 为 `0`，因为网页响应不提供模型发布时间。
+
+新 HAR 已确认该 GET 返回 200。返回的是模型目录，包含不同套餐要求的模型，并非当前账号的可调用权限清单。实现不读取模型选择历史，也不会发送 PATCH。
 
 ```bash
 curl http://127.0.0.1:8080/v1/models \
@@ -63,24 +65,14 @@ curl http://127.0.0.1:8080/v1/models \
     {
       "id": "claude-sonnet-5",
       "object": "model",
-      "created": 1783590000,
+      "created": 0,
       "owned_by": "anthropic"
     }
   ]
 }
 ```
 
-支持的模型 ID：
-
-- `claude-fable-5`
-- `claude-opus-4-8`
-- `claude-haiku-4-5`
-- `claude-opus-4-7`
-- `claude-opus-4-6`
-- `claude-opus-3`
-- `claude-sonnet-4-6`
-- `claude-sonnet-5`
-- `claude-opus-5`
+模型 ID 以接口实际响应为准；聊天请求不再经过本地固定白名单，是否可用由网页上游验证。
 
 ## OpenAI Chat Completions
 
@@ -108,7 +100,7 @@ OpenAI Chat Completions 兼容接口。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`。必须是支持模型。 |
+| `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`；可用性由网页上游验证。 |
 | `messages` | array | 是 | 至少一条消息。支持 `system`、`user`、`assistant`。 |
 | `stream` | boolean | 否 | 为 `true` 时返回 SSE 流。 |
 | `conversation_id` | string | 否 | 传入后启用持久会话，同一个 ID 会复用同一个 claude.ai conversation。 |
@@ -207,7 +199,7 @@ Anthropic Messages 兼容接口。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`。必须是支持模型。 |
+| `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`；可用性由网页上游验证。 |
 | `messages` | array | 是 | 至少一条消息。 |
 | `system` | string | 否 | 作为 system prompt 前置。 |
 | `max_tokens` | integer | 否 | 为空或 0 时默认 `4096`。 |
@@ -310,7 +302,7 @@ OpenAI Responses 兼容接口。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`。必须是支持模型。 |
+| `model` | string | 否 | 为空时使用 `DEFAULT_MODEL`；可用性由网页上游验证。 |
 | `input` | string 或 array | 否 | 输入内容。 |
 | `instructions` | string | 否 | 作为 system prompt 前置。 |
 | `stream` | boolean | 否 | 为 `true` 时返回 Responses 风格 SSE。 |

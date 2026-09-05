@@ -37,7 +37,7 @@ Common status codes:
 
 | Status | Meaning |
 | --- | --- |
-| `400` | Invalid request body or unsupported model. |
+| `400` | Invalid request body or missing model. |
 | `401` | Missing session key or browser Cookie. |
 | `502` | Upstream claude.ai request failed. |
 
@@ -45,7 +45,9 @@ Common status codes:
 
 ### `GET /v1/models`
 
-Returns the supported model list.
+Fetches `/edge-api/bootstrap/{org_id}/app_start?statsig_hashing_algorithm=djb2&growthbook_format=sdk&cache_bust=1&include_system_prompts=false` via GET with the selected account's browser credentials on every call and deduplicates `claude_ai_available_models.models[].model_id`. Upstream failures, schema mismatches, or empty lists return `502`, without a static fallback. `created` is `0` because the web response provides no release timestamp.
+
+The new HAR confirms a 200 response for this GET. The result is a model catalog including models with different subscription requirements, not an account permission list. The implementation neither reads model selection history nor sends PATCH.
 
 ```bash
 curl http://127.0.0.1:8080/v1/models \
@@ -61,24 +63,14 @@ Response:
     {
       "id": "claude-sonnet-5",
       "object": "model",
-      "created": 1783590000,
+      "created": 0,
       "owned_by": "anthropic"
     }
   ]
 }
 ```
 
-Supported model IDs:
-
-- `claude-fable-5`
-- `claude-opus-4-8`
-- `claude-haiku-4-5`
-- `claude-opus-4-7`
-- `claude-opus-4-6`
-- `claude-opus-3`
-- `claude-sonnet-4-6`
-- `claude-sonnet-5`
-- `claude-opus-5`
+Use the IDs returned by the endpoint. Completion requests no longer use a local fixed allowlist; the web upstream validates model availability.
 
 ## Chat Completions
 
@@ -106,7 +98,7 @@ Fields currently used by the proxy:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | No | Defaults to `DEFAULT_MODEL`. Must be supported. |
+| `model` | string | No | Defaults to `DEFAULT_MODEL`; availability is validated by the web upstream. |
 | `messages` | array | Yes | At least one message. Roles: `system`, `user`, `assistant`. |
 | `stream` | boolean | No | When `true`, returns SSE chunks. |
 | `conversation_id` | string | No | Enables persistent conversation mode; the same ID reuses one upstream claude.ai conversation. |

@@ -18,12 +18,12 @@ type Client struct {
 	baseURL    string
 }
 
-// New creates a Chrome-146 tls-client wrapper.
+// New creates a Chrome-152 tls-client wrapper.
 func New(baseURL string) (*Client, error) {
 	jar := tlsclient.NewCookieJar()
 	options := []tlsclient.HttpClientOption{
 		tlsclient.WithTimeoutSeconds(300),
-		tlsclient.WithClientProfile(profiles.Chrome_146),
+		tlsclient.WithClientProfile(profiles.Chrome_152),
 		tlsclient.WithCookieJar(jar),
 		tlsclient.WithNotFollowRedirects(),
 	}
@@ -72,10 +72,10 @@ func (c *Client) SetBrowserHeaders(req *http.Request) {
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
 	req.Header.Set("Origin", c.baseURL)
 	req.Header.Set("Referer", c.baseURL+"/")
-	req.Header.Set("sec-ch-ua", `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`)
+	req.Header.Set("sec-ch-ua", `"Google Chrome";v="152", "Not.A/Brand";v="8", "Chromium";v="152"`)
 	req.Header.Set("sec-ch-ua-mobile", "?0")
 	req.Header.Set("sec-ch-ua-platform", `"Windows"`)
 	req.Header.Set("sec-fetch-dest", "empty")

@@ -164,16 +164,3 @@ func parseThinkingEnv(s string) interface{} {
 	}
 	return map[string]interface{}{"type": "enabled", "budget_tokens": 10000}
 }
-
-// SupportedModels is the set of models exposed by the API
-var SupportedModels = map[string]string{
-	"claude-fable-5":    "claude-fable-5",
-	"claude-opus-4-8":   "claude-opus-4-8",
-	"claude-haiku-4-5":  "claude-haiku-4-5",
-	"claude-opus-4-7":   "claude-opus-4-7",
-	"claude-opus-4-6":   "claude-opus-4-6",
-	"claude-opus-3":     "claude-opus-3",
-	"claude-sonnet-4-6": "claude-sonnet-4-6",
-	"claude-sonnet-5":   "claude-sonnet-5",
-	"claude-opus-5":     "claude-opus-5",
-}

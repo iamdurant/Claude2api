@@ -31,18 +31,11 @@
 
 ## 支持的模型
 
-`/v1/models` 只会返回以下模型，请求时也只允许使用这些模型：
+`GET /v1/models` 使用选中账号的浏览器凭据，每次读取网页接口 `/edge-api/bootstrap/{org_id}/app_start` 的 `claude_ai_available_models.models[].model_id`，不再维护固定模型列表。
 
-- `claude-fable-5`
-- `claude-opus-4-8`
-- `claude-haiku-4-5`
-- `claude-opus-4-7`
-- `claude-opus-4-6`
-- `claude-opus-3`
-- `claude-sonnet-4-6`
-- `claude-sonnet-5`
+列表按上游顺序去重；请求失败或响应没有模型时返回 `502`，不回退到静态数据。多账号模式返回本次选中账号的数据；指定 Bearer 或 `X-Claude-Cookie` 可固定查询账号。聊天请求的模型 ID 直接传给网页端验证，省略时仍使用 `DEFAULT_MODEL`。
 
-使用其他模型会返回 `invalid_request_error`。
+新 HAR 已确认该只读 GET 返回 200。请求沿用网页参数 `statsig_hashing_algorithm=djb2&growthbook_format=sdk&cache_bust=1&include_system_prompts=false`，不会修改模型选择状态。返回的是网页模型目录，其中包括需要更高套餐的模型；出现在列表中不代表当前账号有调用权限。
 
 ## 环境要求
 
