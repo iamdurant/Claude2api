@@ -1,68 +1,46 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-// BearerAuth provides OpenAI-compatible Bearer token authentication.
-// The token is the claude.ai sessionKey.
-// If an env-level session key is configured, the Bearer token is optional.
-func BearerAuth(envSessionKey string) gin.HandlerFunc {
-	return BrowserAuth(envSessionKey, "")
+// BearerAuth provides proxy-level Bearer authentication.
+func BearerAuth(proxyAPIKey string) gin.HandlerFunc {
+	return BrowserAuth(proxyAPIKey, "", "")
 }
 
-// BrowserAuth accepts a sessionKey plus an optional full claude.ai Cookie header.
-func BrowserAuth(envSessionKey, envClaudeCookie string, accountPool ...bool) gin.HandlerFunc {
-	hasAccountPool := len(accountPool) > 0 && accountPool[0]
+// BrowserAuth authenticates callers with the proxy API key and keeps upstream
+// Claude credentials server-side.
+func BrowserAuth(proxyAPIKey, envSessionKey, envClaudeCookie string, _ ...bool) gin.HandlerFunc {
+	expectedKey := strings.TrimSpace(proxyAPIKey)
 	return func(c *gin.Context) {
-		// Request-scoped credentials are a pair: never combine an explicit Bearer
-		// token with the environment Cookie (or the reverse), as that mixes accounts.
-		authHeader := c.GetHeader("Authorization")
-		var token string
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		}
-		cookie := strings.TrimSpace(c.GetHeader("X-Claude-Cookie"))
-		explicitCredentials := token != "" || cookie != ""
-		if explicitCredentials {
-			if token == "" {
-				token = sessionKeyFromCookie(cookie)
-			}
-		} else {
-			token = strings.TrimSpace(envSessionKey)
-			cookie = strings.TrimSpace(envClaudeCookie)
-			if token == "" {
-				token = sessionKeyFromCookie(cookie)
-			}
-		}
-
-		if token == "" && !hasAccountPool {
+		providedKey := bearerToken(c.GetHeader("Authorization"))
+		if expectedKey == "" || providedKey == "" || subtle.ConstantTimeCompare([]byte(providedKey), []byte(expectedKey)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": gin.H{
-					"message": "Missing API key. Provide via Authorization: Bearer <sessionKey> or X-Claude-Cookie",
+					"message": "Missing or invalid proxy API key. Provide Authorization: Bearer <PROXY_API_KEY>",
 					"type":    "invalid_request_error",
 				},
 			})
 			return
 		}
 
-		// Store in context for downstream handlers
-		c.Set("sessionKey", token)
-		c.Set("claudeCookie", cookie)
-		c.Set("explicitCredentials", explicitCredentials)
+		// Store only server-side upstream credentials for downstream handlers.
+		c.Set("sessionKey", strings.TrimSpace(envSessionKey))
+		c.Set("claudeCookie", strings.TrimSpace(envClaudeCookie))
+		c.Set("explicitCredentials", false)
 		c.Next()
 	}
 }
 
-func sessionKeyFromCookie(cookie string) string {
-	for _, part := range strings.Split(cookie, ";") {
-		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		if len(kv) == 2 && kv[0] == "sessionKey" {
-			return kv[1]
-		}
+func bearerToken(header string) string {
+	parts := strings.Fields(header)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return strings.TrimSpace(parts[1])
 	}
 	return ""
 }

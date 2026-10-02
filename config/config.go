@@ -3,22 +3,30 @@ package config
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds application configuration
 type Config struct {
 	Port          string
 	ClaudeBaseURL string
+	ProxyAPIKey   string
 	SessionKey    string
 	ClaudeCookie  string
-	Timezone      string
-	Locale        string
-	DefaultModel  string
-	Effort        string
-	Thinking      interface{}
-	Accounts      []Account
+	AccountsFile  string
+
+	AccountReloadInterval    time.Duration
+	AccountRateLimitCooldown time.Duration
+
+	Timezone     string
+	Locale       string
+	DefaultModel string
+	Effort       string
+	Thinking     interface{}
+	Accounts     []Account
 }
 
 // Account contains credentials for one claude.ai account. Cookie may contain
@@ -71,25 +79,45 @@ func New() *Config {
 	thinkingRaw := os.Getenv("CLAUDE_THINKING")
 	thinking := parseThinkingEnv(thinkingRaw)
 
+	proxyAPIKey := strings.TrimSpace(os.Getenv("PROXY_API_KEY"))
 	sessionKey := os.Getenv("CLAUDE_SESSION_KEY")
 	claudeCookie := os.Getenv("CLAUDE_COOKIE")
-	accounts := loadAccounts(os.Getenv("CLAUDE_ACCOUNTS_FILE"), sessionKey, claudeCookie)
+	accountsFile := strings.TrimSpace(os.Getenv("CLAUDE_ACCOUNTS_FILE"))
+	if accountsFile == "" {
+		accountsFile = "accounts.txt"
+	}
+	accounts := loadAccounts(accountsFile, sessionKey, claudeCookie)
 
 	return &Config{
-		Port:          port,
-		ClaudeBaseURL: baseURL,
-		SessionKey:    sessionKey,
-		ClaudeCookie:  claudeCookie,
-		Timezone:      timezone,
-		Locale:        locale,
-		DefaultModel:  model,
-		Effort:        effort,
-		Thinking:      thinking,
-		Accounts:      accounts,
+		Port:                     port,
+		ClaudeBaseURL:            baseURL,
+		ProxyAPIKey:              proxyAPIKey,
+		SessionKey:               sessionKey,
+		ClaudeCookie:             claudeCookie,
+		AccountsFile:             accountsFile,
+		AccountReloadInterval:    parseDurationEnv(os.Getenv("ACCOUNT_RELOAD_INTERVAL"), 5*time.Second),
+		AccountRateLimitCooldown: parseDurationEnv(os.Getenv("ACCOUNT_RATE_LIMIT_COOLDOWN"), 60*time.Second),
+		Timezone:                 timezone,
+		Locale:                   locale,
+		DefaultModel:             model,
+		Effort:                   effort,
+		Thinking:                 thinking,
+		Accounts:                 accounts,
 	}
 }
 
 func loadAccounts(path, fallbackSessionKey, fallbackCookie string) []Account {
+	accounts, err := LoadAccounts(path, fallbackSessionKey, fallbackCookie)
+	if err == nil {
+		return accounts
+	}
+	return fallbackAccounts(fallbackSessionKey, fallbackCookie)
+}
+
+// LoadAccounts reads the configured account file and appends the optional
+// environment-level credentials, preserving file order and deduplicating pairs.
+// A missing file is valid; other read or scanner errors are returned.
+func LoadAccounts(path, fallbackSessionKey, fallbackCookie string) ([]Account, error) {
 	if strings.TrimSpace(path) == "" {
 		path = "accounts.txt"
 	}
@@ -113,7 +141,8 @@ func loadAccounts(path, fallbackSessionKey, fallbackCookie string) []Account {
 		accounts = append(accounts, account)
 	}
 
-	if f, err := os.Open(path); err == nil {
+	f, err := os.Open(path)
+	if err == nil {
 		defer f.Close()
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -128,10 +157,40 @@ func loadAccounts(path, fallbackSessionKey, fallbackCookie string) []Account {
 				add(Account{SessionKey: line})
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scan accounts file: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("open accounts file: %w", err)
 	}
 
 	add(Account{SessionKey: fallbackSessionKey, Cookie: fallbackCookie})
+	return accounts, nil
+}
+
+func fallbackAccounts(sessionKey, cookie string) []Account {
+	accounts := make([]Account, 0, 1)
+	sessionKey = strings.TrimSpace(sessionKey)
+	cookie = strings.TrimSpace(cookie)
+	if sessionKey == "" {
+		sessionKey = sessionKeyFromCookie(cookie)
+	}
+	if sessionKey != "" {
+		accounts = append(accounts, Account{SessionKey: sessionKey, Cookie: cookie})
+	}
 	return accounts
+}
+
+func parseDurationEnv(value string, fallback time.Duration) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return fallback
+	}
+	return duration
 }
 
 func sessionKeyFromCookie(cookie string) string {
