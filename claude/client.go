@@ -228,7 +228,7 @@ func (c *Client) GetOrganization(ctx context.Context) (string, error) {
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("get organizations: status %d: %s", resp.StatusCode, string(body))
+		return "", newHTTPError("get organizations", resp, body)
 	}
 
 	var orgs models.ClaudeOrganizationsResponse
@@ -266,7 +266,7 @@ func (c *Client) CreateConversation(ctx context.Context, title string) (string, 
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("create conversation: status %d: %s", resp.StatusCode, string(respBody))
+		return "", newHTTPError("create conversation", resp, respBody)
 	}
 
 	var conv models.ClaudeConversation
@@ -293,7 +293,7 @@ func (c *Client) DeleteConversation(ctx context.Context, convID string) error {
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete conversation: status %d: %s", resp.StatusCode, string(body))
+		return newHTTPError("delete conversation", resp, body)
 	}
 
 	return nil
@@ -319,7 +319,7 @@ func (c *Client) SendMessage(ctx context.Context, convID string, req *models.Cla
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("send message: status %d: %s", resp.StatusCode, string(respBody))
+		return nil, newHTTPError("send message", resp, respBody)
 	}
 
 	// Parse SSE stream in background

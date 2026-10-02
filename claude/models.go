@@ -17,7 +17,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 
 	orgID, err := c.GetOrganization(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list web models: organization lookup failed")
+		return nil, fmt.Errorf("list web models: organization lookup failed: %w", err)
 	}
 	path := "/edge-api/bootstrap/" + url.PathEscape(orgID) + "/app_start?statsig_hashing_algorithm=djb2&growthbook_format=sdk&cache_bust=1&include_system_prompts=false"
 	resp, err := c.doRequest(ctx, "GET", path, nil, "/new")
@@ -26,7 +26,8 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("list web models: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, newHTTPError("list web models", resp, body)
 	}
 
 	var bootstrap struct {
