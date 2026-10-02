@@ -18,7 +18,7 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 
 	lease, err := h.acquireClient(c, conversationID)
 	if err != nil {
-		internalError(c, "create client: "+err.Error())
+		h.writeAcquireError(c, err)
 		return
 	}
 	defer lease.release()
@@ -33,7 +33,8 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 	if err := lease.client.DeleteConversation(ctx, state.ClaudeConversationID); err != nil {
-		upstreamError(c, err.Error())
+		h.clients.observe(lease.accountID, err)
+		h.writeUpstreamError(c, lease.accountID, err)
 		return
 	}
 

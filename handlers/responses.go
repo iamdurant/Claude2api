@@ -27,7 +27,7 @@ func (h *Handler) Responses(c *gin.Context) {
 
 	lease, err := h.acquireClient(c, req.ConversationID)
 	if err != nil {
-		internalError(c, "create client: "+err.Error())
+		h.writeAcquireError(c, err)
 		return
 	}
 	defer lease.release()
@@ -115,7 +115,7 @@ func flattenContentParts(parts []interface{}) string {
 func (h *Handler) responsesNonStream(c *gin.Context, client *claude.Client, prompt, claudeModel, effort, conversationID, accountID string) {
 	_, content, err := h.runCompletion(c.Request.Context(), client, prompt, claudeModel, effort, conversationID, accountID, nil, nil)
 	if err != nil {
-		upstreamError(c, err.Error())
+		h.writeUpstreamError(c, accountID, err)
 		return
 	}
 	respID := genID("resp_")

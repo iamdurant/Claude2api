@@ -21,11 +21,7 @@ type HTTPError struct {
 }
 
 func (e *HTTPError) Error() string {
-	message := strings.TrimSpace(e.Message)
-	if message == "" {
-		return fmt.Sprintf("%s: status %d", e.Operation, e.StatusCode)
-	}
-	return fmt.Sprintf("%s: status %d: %s", e.Operation, e.StatusCode, message)
+	return fmt.Sprintf("%s: status %d", e.Operation, e.StatusCode)
 }
 
 func IsStatus(err error, statusCode int) bool {

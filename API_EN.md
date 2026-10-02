@@ -6,19 +6,13 @@ Base URL:
 http://127.0.0.1:8080/v1
 ```
 
-All endpoints under `/v1` require authentication. Use either:
+All endpoints under `/v1` require the proxy API key:
 
 ```http
-Authorization: Bearer <claude.ai sessionKey>
+Authorization: Bearer <PROXY_API_KEY>
 ```
 
-or:
-
-```http
-X-Claude-Cookie: <full claude.ai browser Cookie header>
-```
-
-If `CLAUDE_SESSION_KEY` or `CLAUDE_COOKIE` is configured on the server, callers may omit the matching request header.
+Claude `sessionKey`, full Cookie values, and `accounts.txt` entries are server-side credentials. A caller-provided `X-Claude-Cookie` does not override them.
 
 ## Errors
 
@@ -38,7 +32,9 @@ Common status codes:
 | Status | Meaning |
 | --- | --- |
 | `400` | Invalid request body or missing model. |
-| `401` | Missing session key or browser Cookie. |
+| `401` | Missing or invalid proxy API key. |
+| `429` | No account is currently eligible; retry after `Retry-After`. |
+| `503` | No configured account is available. |
 | `502` | Upstream claude.ai request failed. |
 
 ## Models
@@ -51,7 +47,7 @@ The new HAR confirms a 200 response for this GET. The result is a model catalog 
 
 ```bash
 curl http://127.0.0.1:8080/v1/models \
-  -H 'Authorization: Bearer <sessionKey>'
+  -H 'Authorization: Bearer <PROXY_API_KEY>'
 ```
 
 Response:
@@ -113,7 +109,7 @@ Messages are flattened to a claude.ai prompt using `[System]`, `[Human]`, and `[
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer <sessionKey>' \
+  -H 'Authorization: Bearer <PROXY_API_KEY>' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "claude-sonnet-5",
@@ -152,7 +148,7 @@ Response:
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer <sessionKey>' \
+  -H 'Authorization: Bearer <PROXY_API_KEY>' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "claude-sonnet-5",
@@ -230,7 +226,7 @@ Delete a persistent conversation:
 
 ```bash
 curl -X DELETE http://127.0.0.1:8080/v1/conversations/my-chat-001 \
-  -H 'Authorization: Bearer <sessionKey>'
+  -H 'Authorization: Bearer <PROXY_API_KEY>'
 ```
 
 Response:
@@ -241,26 +237,13 @@ Response:
 
 The conversation mapping is stored in memory and is lost after server restart.
 
-## Full Browser Cookie Usage
+## Server-Side Browser Cookie
 
-When the simple Bearer session key gets rate-limited or behaves differently from the browser, pass the full claude.ai browser Cookie:
-
-```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'X-Claude-Cookie: sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; lastActiveOrg=...; ...' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "claude-sonnet-5",
-    "messages": [{"role": "user", "content": "Reply with exactly: pong"}],
-    "stream": false
-  }'
-```
-
-The proxy extracts `sessionKey` from the Cookie when no Bearer token is present.
+When browser-like behavior is needed, configure the full claude.ai Cookie in `CLAUDE_COOKIE` or as one line in `accounts.txt`. Clients still send only `PROXY_API_KEY`; they do not send `X-Claude-Cookie`.
 
 ## Generated Environment in sessionKey Mode
 
-When only a `sessionKey` is provided, the server generates browser-like values and request structure that are normally frontend-generated, such as:
+When only the server-side `CLAUDE_SESSION_KEY` is provided, the server generates browser-like values and request structure that are normally frontend-generated, such as:
 
 - `sessionKeyLC`
 - `anthropic-device-id`
@@ -282,7 +265,7 @@ Signed server-side or Cloudflare-issued cookies are not forged and are not sent 
 
 `routingHint` is issued by the claude.ai backend. It commonly appears as `sk-ant-rh-...` and its internal shape is similar to a signed JWT. It is usually created during login, session refresh, account routing initialization, or organization loading. Clients can only store and replay a real value; they cannot generate a valid one locally.
 
-Use `X-Claude-Cookie` or `CLAUDE_COOKIE` with a real browser Cookie header if you need those values.
+Configure `CLAUDE_COOKIE` or an `accounts.txt` entry with a real browser Cookie header if you need those values.
 
 ## Unsupported Endpoints
 

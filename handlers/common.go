@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +29,7 @@ type Handler struct {
 
 // NewHandler creates a handler.
 func NewHandler(cfg *config.Config) *Handler {
-	clients, err := newClientPool(cfg.ClaudeBaseURL, cfg.Accounts)
+	clients, err := newClientPool(cfg.ClaudeBaseURL, cfg.Accounts, cfg.AccountRateLimitCooldown)
 	if err != nil {
 		panic(err)
 	}
@@ -37,6 +39,13 @@ func NewHandler(cfg *config.Config) *Handler {
 		clients:       clients,
 		deleteSlots:   make(chan struct{}, 32),
 	}
+}
+
+// ReloadAccounts replaces the configured account set while preserving stable
+// clients and state for credentials that remain present.
+func (h *Handler) ReloadAccounts(accounts []config.Account) error {
+	_, err := h.clients.reloadConfigured(accounts)
+	return err
 }
 
 // resolveModel leaves availability validation to the web API so new IDs work immediately.
@@ -89,7 +98,9 @@ func (h *Handler) acquireClient(c *gin.Context, conversationID string) (*clientL
 	sessionKey, _ := c.Get("sessionKey")
 	claudeCookie, _ := c.Get("claudeCookie")
 	explicitCredentials, _ := c.Get("explicitCredentials")
-	return h.clients.acquire(sessionKey.(string), claudeCookie.(string), explicitCredentials == true, conversationID)
+	sessionKeyValue, _ := sessionKey.(string)
+	claudeCookieValue, _ := claudeCookie.(string)
+	return h.clients.acquire(sessionKeyValue, claudeCookieValue, explicitCredentials == true, conversationID)
 }
 
 func (h *Handler) deleteTemporaryConversation(client *claude.Client, conversationID string) {
@@ -127,6 +138,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 		if created {
 			createdID, err := client.CreateConversation(ctx, "chat")
 			if err != nil {
+				h.clients.observe(accountID, err)
 				h.conversations.removeIfSame(state)
 				return "", "", fmt.Errorf("create conversation: %w", err)
 			}
@@ -137,6 +149,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 	} else {
 		createdID, err := client.CreateConversation(ctx, "chat")
 		if err != nil {
+			h.clients.observe(accountID, err)
 			return "", "", fmt.Errorf("create conversation: %w", err)
 		}
 		convID = createdID
@@ -195,6 +208,7 @@ func (h *Handler) runCompletion(ctx context.Context, client *claude.Client, prom
 
 	events, err := client.SendMessage(ctx, convID, req)
 	if err != nil {
+		h.clients.observe(accountID, err)
 		return "", "", fmt.Errorf("send message: %w", err)
 	}
 
@@ -239,14 +253,15 @@ func writeSSE(w io.Writer, payload interface{}) {
 func (h *Handler) ListModels(c *gin.Context) {
 	lease, err := h.acquireClient(c, "")
 	if err != nil {
-		internalError(c, "create client: "+err.Error())
+		h.writeAcquireError(c, err)
 		return
 	}
 	defer lease.release()
 
 	ids, err := lease.client.ListModels(c.Request.Context())
 	if err != nil {
-		upstreamError(c, err.Error())
+		h.clients.observe(lease.accountID, err)
+		h.writeUpstreamError(c, lease.accountID, err)
 		return
 	}
 	data := make([]models.ModelInfo, 0, len(ids))
@@ -260,6 +275,52 @@ func (h *Handler) ListModels(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, models.ModelsResponse{Object: "list", Data: data})
+}
+
+func (h *Handler) writeAcquireError(c *gin.Context, err error) {
+	var rateLimitErr *accountRateLimitError
+	if errors.As(err, &rateLimitErr) {
+		retryAfter := rateLimitErr.retryAfter
+		if retryAfter <= 0 {
+			retryAfter = time.Second
+		}
+		seconds := (retryAfter + time.Second - 1) / time.Second
+		c.Header("Retry-After", strconv.FormatInt(int64(seconds), 10))
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+			"message": rateLimitErr.Error(),
+			"type":    "upstream_error",
+		}})
+		return
+	}
+
+	var unavailableErr *accountUnavailableError
+	if errors.As(err, &unavailableErr) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+			"message": unavailableErr.Error(),
+			"type":    "service_unavailable",
+		}})
+		return
+	}
+	internalError(c, "create client: "+err.Error())
+}
+
+func (h *Handler) writeUpstreamError(c *gin.Context, accountID string, err error) {
+	if claude.IsStatus(err, http.StatusTooManyRequests) {
+		retryAfter := h.clients.cooldownRemaining(accountID)
+		if retryAfter <= 0 {
+			retryAfter, _ = claude.RetryAfterOf(err)
+		}
+		if retryAfter > 0 {
+			seconds := (retryAfter + time.Second - 1) / time.Second
+			c.Header("Retry-After", strconv.FormatInt(int64(seconds), 10))
+		}
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+			"message": err.Error(),
+			"type":    "upstream_error",
+		}})
+		return
+	}
+	upstreamError(c, err.Error())
 }
 
 // genID returns a short id like "chatcmpl-xxxxxxxx"

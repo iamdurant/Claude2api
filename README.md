@@ -21,8 +21,8 @@
 - 支持 `accounts.txt` 多账号池，按当前活跃请求数进行最小负载分发
 - 账号级复用 TLS Client、CookieJar、浏览器身份和组织信息，避免每请求重复初始化
 - 持久会话按账号隔离，并串行化同一 `conversation_id` 的并发轮次，避免会话串扰
-- 支持 Bearer sessionKey 模式，便于本地简单调用
-- Bearer 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递
+- 支持独立代理 API Key，服务端 Claude 凭据不暴露给调用方
+- 服务端 sessionKey 模式下会自动生成可由前端生成的浏览器环境 Cookie/Header；签名或 Cloudflare 类 Cookie 不伪造、不传递
 - completion 请求会携带从真实浏览器请求逆向得到的 claude.ai web `tools` 字段
 - Referer 会按请求阶段动态设置为 `/new` 或 `/chat/<conversation_id>`
 - Datadog/RUM Cookie 与 trace headers 会按浏览器 SDK 的字段结构生成
@@ -33,7 +33,7 @@
 
 `GET /v1/models` 使用选中账号的浏览器凭据，每次读取网页接口 `/edge-api/bootstrap/{org_id}/app_start` 的 `claude_ai_available_models.models[].model_id`，不再维护固定模型列表。
 
-列表按上游顺序去重；请求失败或响应没有模型时返回 `502`，不回退到静态数据。多账号模式返回本次选中账号的数据；指定 Bearer 或 `X-Claude-Cookie` 可固定查询账号。聊天请求的模型 ID 直接传给网页端验证，省略时仍使用 `DEFAULT_MODEL`。
+列表按上游顺序去重；请求失败或响应没有模型时返回 `502`，不回退到静态数据。多账号模式返回本次选中账号的数据；客户端只能使用代理 API Key，不能指定上游账号。聊天请求的模型 ID 直接传给网页端验证，省略时仍使用 `DEFAULT_MODEL`。
 
 新 HAR 已确认该只读 GET 返回 200。请求沿用网页参数 `statsig_hashing_algorithm=djb2&growthbook_format=sdk&cache_bust=1&include_system_prompts=false`，不会修改模型选择状态。返回的是网页模型目录，其中包括需要更高套餐的模型；出现在列表中不代表当前账号有调用权限。
 
@@ -64,13 +64,13 @@ go build -o claude2api .
 使用 sessionKey：
 
 ```bash
-CLAUDE_SESSION_KEY='你的-sessionKey' PORT=8080 ./claude2api.exe
+PROXY_API_KEY='你的代理密钥' CLAUDE_SESSION_KEY='你的-sessionKey' PORT=8080 ./claude2api.exe
 ```
 
 使用完整浏览器 Cookie：
 
 ```bash
-CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' PORT=8080 ./claude2api.exe
+PROXY_API_KEY='你的代理密钥' CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' PORT=8080 ./claude2api.exe
 ```
 
 使用多账号池：在工作目录创建 `accounts.txt`，每行放一个 sessionKey 或一条完整 Cookie，空行和 `#` 注释会被忽略：
@@ -80,7 +80,7 @@ sk-ant-sid01-...
 sessionKey=sk-ant-sid02-...; sessionKeyLC=...; anthropic-device-id=...; ...
 ```
 
-也可通过 `CLAUDE_ACCOUNTS_FILE` 指定其他账号文件。未显式携带认证 Header 的请求会从账号池选择当前活跃请求最少的账号；显式传入 `Authorization` 或 `X-Claude-Cookie` 时仍固定使用该账号。
+也可通过 `CLAUDE_ACCOUNTS_FILE` 指定其他账号文件。所有 `/v1/*` 请求都必须携带代理 Key；Claude 的 sessionKey 和 Cookie 只从服务端配置读取，不接受客户端传入的上游凭据。修改账号文件后默认 5 秒内自动加载，删除的账号不再接收新请求。
 
 服务地址：
 
@@ -92,7 +92,7 @@ http://127.0.0.1:8080/v1
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer 你的-sessionKey' \
+  -H 'Authorization: Bearer 你的代理密钥' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "claude-sonnet-5",
@@ -136,6 +136,7 @@ docker pull ghcr.io/aurora-develop/claude2api:latest
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -e PROXY_API_KEY='你的代理密钥' \
   -e CLAUDE_SESSION_KEY='你的-sessionKey' \
   ghcr.io/aurora-develop/claude2api:latest
 ```
@@ -152,6 +153,7 @@ docker build -t claude2api .
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -e PROXY_API_KEY='你的代理密钥' \
   -e CLAUDE_SESSION_KEY='你的-sessionKey' \
   claude2api
 ```
@@ -160,6 +162,7 @@ docker run --rm -p 8080:8080 \
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -e PROXY_API_KEY='你的代理密钥' \
   -e CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' \
   claude2api
 ```
@@ -167,13 +170,13 @@ docker run --rm -p 8080:8080 \
 ### Docker Compose
 
 ```bash
-CLAUDE_SESSION_KEY='你的-sessionKey' docker compose up --build
+PROXY_API_KEY='你的代理密钥' CLAUDE_SESSION_KEY='你的-sessionKey' docker compose up --build
 ```
 
 或者：
 
 ```bash
-CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' docker compose up --build
+PROXY_API_KEY='你的代理密钥' CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' docker compose up --build
 ```
 
 ## 配置项
@@ -182,9 +185,12 @@ CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' d
 | --- | --- | --- |
 | `PORT` | `8080` | 本地 HTTP 服务端口。 |
 | `CLAUDE_BASE_URL` | `https://claude.ai` | claude.ai 上游地址。 |
-| `CLAUDE_SESSION_KEY` | 空 | claude.ai 的 `sessionKey`。配置后请求端可以不传 Bearer。 |
-| `CLAUDE_COOKIE` | 空 | 从浏览器复制的完整 claude.ai Cookie。推荐用于更接近浏览器环境。 |
+| `PROXY_API_KEY` | 无，必填 | 客户端调用代理时使用的独立 API Key。 |
+| `CLAUDE_SESSION_KEY` | 空 | 服务端使用的 claude.ai `sessionKey`，不会作为代理 API Key。 |
+| `CLAUDE_COOKIE` | 空 | 服务端使用的完整 claude.ai Cookie。 |
 | `CLAUDE_ACCOUNTS_FILE` | `accounts.txt` | 多账号文件路径；每行一个 sessionKey 或完整 Cookie。 |
+| `ACCOUNT_RELOAD_INTERVAL` | `5s` | 账号文件轮询间隔。 |
+| `ACCOUNT_RATE_LIMIT_COOLDOWN` | `60s` | 上游 429 没有 `Retry-After` 时使用的账号冷却时间。 |
 | `CLAUDE_TIMEZONE` | `Asia/Singapore` | 发送给 claude.ai 的时区。 |
 | `CLAUDE_LOCALE` | `en-US` | 发送给 claude.ai 的语言区域。 |
 | `DEFAULT_MODEL` | `claude-sonnet-5` | 请求未指定模型时使用的默认模型。必须在支持模型列表内。 |
@@ -193,15 +199,15 @@ CLAUDE_COOKIE='sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; ...' d
 
 所有 `/v1/*` 接口都需要认证。
 
-### 方式一：Bearer sessionKey
+客户端使用代理 API Key：
 
 ```http
-Authorization: Bearer <claude.ai sessionKey>
+Authorization: Bearer <PROXY_API_KEY>
 ```
 
-如果服务端已经配置 `CLAUDE_SESSION_KEY`，请求端可以不传这个 Header。
+`CLAUDE_SESSION_KEY`、`CLAUDE_COOKIE` 和 `accounts.txt` 中的账号只在服务端配置。客户端传入的 `X-Claude-Cookie` 不会覆盖服务端账号。
 
-Bearer 模式下，用户只需要提供 `sessionKey`。服务端会自动生成这些前端可生成的环境值：
+服务端使用 sessionKey 时会自动生成这些前端可生成的环境值：
 
 - `sessionKeyLC`
 - `anthropic-device-id`
@@ -212,20 +218,14 @@ Bearer 模式下，用户只需要提供 `sessionKey`。服务端会自动生成
 - `traceparent` / Datadog RUM 相关 Header
 - 部分 UI / analytics Cookie
 
-以下不能伪造的服务端签名或 Cloudflare Cookie 不会自动生成，也不会在 Bearer 模式下传递：
+以下不能伪造的服务端签名或 Cloudflare Cookie 不会自动生成：
 
 - `routingHint`
 - `cf_clearance`
 - `__cf_bm`
 - `_cfuvid`
 
-### 方式二：完整浏览器 Cookie
-
-```http
-X-Claude-Cookie: <从 claude.ai 浏览器请求中复制的完整 Cookie>
-```
-
-这种方式最接近浏览器行为。代理会复用 Cookie 中的：
+服务端配置完整 Cookie 时，代理会复用 Cookie 中的：
 
 - `sessionKey`
 - `sessionKeyLC`
@@ -233,8 +233,6 @@ X-Claude-Cookie: <从 claude.ai 浏览器请求中复制的完整 Cookie>
 - `lastActiveOrg`
 - `routingHint`
 - Cloudflare 相关 Cookie
-
-如果服务端已经配置 `CLAUDE_COOKIE`，请求端可以不传 `X-Claude-Cookie`。
 
 ## 致谢
 
@@ -250,6 +248,6 @@ X-Claude-Cookie: <从 claude.ai 浏览器请求中复制的完整 Cookie>
 
 - 未传 `conversation_id` 时，每次 completion 会创建临时 claude.ai 会话，并在响应完成后异步尝试删除。
 - `usage` 中的 token 数是近似值，目前主要根据输出文本长度估算。
-- 如果 Bearer sessionKey 模式和浏览器行为不一致，建议使用完整 Cookie 模式。
-- 如果上游返回 `429`，说明 claude.ai 当前账号或会话触发了速率限制。
+- 上游返回 `429` 时，对应账号会进入冷却并暂时退出调度；存在其他账号时请求会切换账号。
+- 如果所有账号都在冷却，代理返回 `429` 和 `Retry-After`；客户端应按该时间重试。
 - 请不要把自己的 `sessionKey`、完整 Cookie、抓包文件提交到公开仓库。

@@ -8,19 +8,13 @@
 http://127.0.0.1:8080/v1
 ```
 
-所有 `/v1` 下的接口都需要认证。可以使用以下任意一种方式：
+所有 `/v1` 下的接口都需要代理 API Key：
 
 ```http
-Authorization: Bearer <claude.ai sessionKey>
+Authorization: Bearer <PROXY_API_KEY>
 ```
 
-或：
-
-```http
-X-Claude-Cookie: <完整 claude.ai 浏览器 Cookie>
-```
-
-如果服务端已经配置 `CLAUDE_SESSION_KEY` 或 `CLAUDE_COOKIE`，请求端可以省略对应 Header。
+Claude 的 `sessionKey`、完整 Cookie 和 `accounts.txt` 只在服务端配置。客户端传入的 `X-Claude-Cookie` 不会覆盖服务端账号。
 
 ## 错误格式
 
@@ -40,7 +34,9 @@ X-Claude-Cookie: <完整 claude.ai 浏览器 Cookie>
 | 状态码 | 说明 |
 | --- | --- |
 | `400` | 请求体无效或缺少模型。 |
-| `401` | 缺少 sessionKey 或浏览器 Cookie。 |
+| `401` | 缺少或无效的代理 API Key。 |
+| `429` | 当前没有可用账号；按 `Retry-After` 等待后重试。 |
+| `503` | 没有已配置的可用账号。 |
 | `502` | 上游 claude.ai 请求失败。 |
 
 ## 模型列表
@@ -53,7 +49,7 @@ X-Claude-Cookie: <完整 claude.ai 浏览器 Cookie>
 
 ```bash
 curl http://127.0.0.1:8080/v1/models \
-  -H 'Authorization: Bearer <sessionKey>'
+  -H 'Authorization: Bearer <PROXY_API_KEY>'
 ```
 
 响应示例：
@@ -115,7 +111,7 @@ OpenAI Chat Completions 兼容接口。
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer <sessionKey>' \
+  -H 'Authorization: Bearer <PROXY_API_KEY>' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "claude-sonnet-5",
@@ -154,7 +150,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Authorization: Bearer <sessionKey>' \
+  -H 'Authorization: Bearer <PROXY_API_KEY>' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "claude-sonnet-5",
@@ -389,7 +385,7 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 
 ```bash
 curl -X DELETE http://127.0.0.1:8080/v1/conversations/my-chat-001 \
-  -H 'Authorization: Bearer <sessionKey>'
+  -H 'Authorization: Bearer <PROXY_API_KEY>'
 ```
 
 响应：
@@ -400,26 +396,13 @@ curl -X DELETE http://127.0.0.1:8080/v1/conversations/my-chat-001 \
 
 注意：当前会话映射保存在内存中，服务重启后会丢失。
 
-## 完整浏览器 Cookie 用法
+## 服务端浏览器 Cookie
 
-如果 Bearer sessionKey 模式和浏览器行为不一致，或遇到浏览器正常但本地请求异常的情况，建议传完整 claude.ai 浏览器 Cookie：
-
-```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'X-Claude-Cookie: sessionKey=...; sessionKeyLC=...; anthropic-device-id=...; lastActiveOrg=...; ...' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "claude-sonnet-5",
-    "messages": [{"role": "user", "content": "Reply with exactly: pong"}],
-    "stream": false
-  }'
-```
-
-没有 Bearer token 时，代理会尝试从 Cookie 中提取 `sessionKey`。
+如果需要接近浏览器的请求环境，将完整 claude.ai Cookie 配置到服务端的 `CLAUDE_COOKIE`，或作为 `accounts.txt` 的一行。客户端仍然只发送 `PROXY_API_KEY`，不会直接发送 `X-Claude-Cookie`。
 
 ## sessionKey 模式下自动生成的环境
 
-当只传 `sessionKey` 时，代理服务端会自动生成前端可生成的浏览器环境，并补齐更接近浏览器的请求结构，例如：
+当服务端只配置 `CLAUDE_SESSION_KEY` 时，代理会自动生成前端可生成的浏览器环境，并补齐更接近浏览器的请求结构，例如：
 
 - `sessionKeyLC`
 - `anthropic-device-id`
@@ -443,7 +426,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 `routingHint` 是 claude.ai 后端签发的路由提示，值通常是 `sk-ant-rh-...` 形式，内部结构类似带签名的 JWT。它一般在登录、会话刷新、账号路由初始化或组织信息加载时由 claude.ai 服务端下发；客户端最多只能原样保存和回传，不能自行生成有效值。
 
-如果确实需要这些值，请使用 `X-Claude-Cookie` 或 `CLAUDE_COOKIE` 传入真实浏览器完整 Cookie。
+如果确实需要这些值，请在服务端使用 `CLAUDE_COOKIE` 或 `accounts.txt` 配置真实浏览器完整 Cookie。
 
 ## 不支持的接口
 

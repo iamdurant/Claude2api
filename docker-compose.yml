@@ -10,6 +10,7 @@ services:
       - "${CLAUDE_ACCOUNTS_FILE:-./accounts.txt}:/app/accounts.txt:ro"
     environment:
       PORT: "8080"
+      PROXY_API_KEY: "${PROXY_API_KEY:?PROXY_API_KEY is required}"
       CLAUDE_BASE_URL: "${CLAUDE_BASE_URL:-https://claude.ai}"
       CLAUDE_SESSION_KEY: "${CLAUDE_SESSION_KEY:-}"
       CLAUDE_COOKIE: "${CLAUDE_COOKIE:-}"
@@ -17,3 +18,5 @@ services:
       CLAUDE_TIMEZONE: "${CLAUDE_TIMEZONE:-Asia/Singapore}"
       CLAUDE_LOCALE: "${CLAUDE_LOCALE:-en-US}"
       DEFAULT_MODEL: "${DEFAULT_MODEL:-claude-sonnet-5}"
+      ACCOUNT_RELOAD_INTERVAL: "${ACCOUNT_RELOAD_INTERVAL:-5s}"
+      ACCOUNT_RATE_LIMIT_COOLDOWN: "${ACCOUNT_RATE_LIMIT_COOLDOWN:-60s}"

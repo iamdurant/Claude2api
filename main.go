@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,12 @@ import (
 
 func main() {
 	cfg := config.New()
+	if strings.TrimSpace(cfg.ProxyAPIKey) == "" {
+		log.Fatal("PROXY_API_KEY is required")
+	}
+	if len(cfg.Accounts) == 0 {
+		log.Fatal("no Claude account configured; set CLAUDE_SESSION_KEY, CLAUDE_COOKIE, or CLAUDE_ACCOUNTS_FILE")
+	}
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -33,10 +40,12 @@ func main() {
 	})
 
 	h := handlers.NewHandler(cfg)
+	watchCtx, stopWatching := context.WithCancel(context.Background())
+	go watchAccounts(watchCtx, h, cfg)
 
 	// OpenAI-compatible endpoints
 	v1 := r.Group("/v1")
-	v1.Use(middleware.BrowserAuth(cfg.SessionKey, cfg.ClaudeCookie, len(cfg.Accounts) > 0))
+	v1.Use(middleware.BrowserAuth(cfg.ProxyAPIKey, cfg.SessionKey, cfg.ClaudeCookie, true))
 	{
 		v1.GET("/models", h.ListModels)
 		v1.POST("/chat/completions", h.ChatCompletion)
@@ -58,8 +67,6 @@ func main() {
 			log.Printf("  Accounts : %d configured, least-loaded routing enabled", len(cfg.Accounts))
 		} else if len(cfg.Accounts) == 1 {
 			log.Printf("  Auth     : one configured account")
-		} else {
-			log.Printf("  Auth     : per-request Bearer token required")
 		}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %s", err)
@@ -70,10 +77,36 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("shutting down...")
+	stopWatching()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("forced shutdown: %v", err)
+	}
+}
+
+func watchAccounts(ctx context.Context, h *handlers.Handler, cfg *config.Config) {
+	interval := cfg.AccountReloadInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			accounts, err := config.LoadAccounts(cfg.AccountsFile, cfg.SessionKey, cfg.ClaudeCookie)
+			if err != nil {
+				log.Printf("accounts reload failed: %v", err)
+				continue
+			}
+			if err := h.ReloadAccounts(accounts); err != nil {
+				log.Printf("accounts reload rejected: %v", err)
+			}
+		}
 	}
 }

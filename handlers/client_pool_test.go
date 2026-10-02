@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
+	"claude2api/claude"
 	"claude2api/config"
 )
 
@@ -16,8 +19,14 @@ func TestClientPoolBalancesConfiguredAccounts(t *testing.T) {
 		t.Fatalf("newClientPool: %v", err)
 	}
 
-	first := pool.acquireConfigured()
-	second := pool.acquireConfigured()
+	first, err := pool.acquireConfigured()
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	second, err := pool.acquireConfigured()
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
 	defer first.release()
 	defer second.release()
 	if first.accountID == second.accountID {
@@ -182,7 +191,12 @@ func TestClientPoolBalancesConcurrentConfiguredRequests(t *testing.T) {
 		go func() {
 			defer released.Done()
 			<-start
-			lease := pool.acquireConfigured()
+			lease, err := pool.acquireConfigured()
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+				acquired.Done()
+				return
+			}
 			acquired.Done()
 			<-releaseAll
 			lease.release()
@@ -198,6 +212,130 @@ func TestClientPoolBalancesConcurrentConfiguredRequests(t *testing.T) {
 	}
 	close(releaseAll)
 	released.Wait()
+}
+
+func TestClientPoolSkipsRateLimitedAccount(t *testing.T) {
+	pool, err := newClientPool("https://claude.ai", []config.Account{
+		{SessionKey: "account-a"},
+		{SessionKey: "account-b"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("newClientPool: %v", err)
+	}
+	pool.observe(pool.accounts[0].id, &claude.HTTPError{
+		StatusCode:    429,
+		RetryAfter:    time.Minute,
+		RetryAfterSet: true,
+	})
+
+	lease, err := pool.acquireConfigured()
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer lease.release()
+	if lease.accountID != pool.accounts[1].id {
+		t.Fatalf("selected cooling account %q", lease.accountID)
+	}
+}
+
+func TestClientPoolReenablesAccountAfterCooldown(t *testing.T) {
+	pool, err := newClientPool("https://claude.ai", []config.Account{
+		{SessionKey: "account-a"},
+		{SessionKey: "account-b"},
+	}, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("newClientPool: %v", err)
+	}
+	pool.observe(pool.accounts[0].id, &claude.HTTPError{
+		StatusCode:    429,
+		RetryAfter:    10 * time.Millisecond,
+		RetryAfterSet: true,
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	lease, err := pool.acquireConfigured()
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer lease.release()
+	if lease.accountID != pool.accounts[0].id {
+		t.Fatalf("expired cooldown was not eligible: %q", lease.accountID)
+	}
+}
+
+func TestClientPoolReturnsShortestRetryAfterWhenAllAccountsAreCooling(t *testing.T) {
+	pool, err := newClientPool("https://claude.ai", []config.Account{
+		{SessionKey: "account-a"},
+		{SessionKey: "account-b"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("newClientPool: %v", err)
+	}
+	pool.observe(pool.accounts[0].id, &claude.HTTPError{StatusCode: 429, RetryAfter: 80 * time.Millisecond, RetryAfterSet: true})
+	pool.observe(pool.accounts[1].id, &claude.HTTPError{StatusCode: 429, RetryAfter: 160 * time.Millisecond, RetryAfterSet: true})
+
+	_, err = pool.acquireConfigured()
+	var rateLimitErr *accountRateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("error = %v, want account rate-limit error", err)
+	}
+	if rateLimitErr.retryAfter <= 0 || rateLimitErr.retryAfter > 100*time.Millisecond {
+		t.Fatalf("unexpected retry delay: %v", rateLimitErr.retryAfter)
+	}
+}
+
+func TestClientPoolPinnedConversationReturnsRateLimitWhileCooling(t *testing.T) {
+	pool, err := newClientPool("https://claude.ai", []config.Account{
+		{SessionKey: "account-a"},
+		{SessionKey: "account-b"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("newClientPool: %v", err)
+	}
+	first, err := pool.acquire("", "", false, "conversation-1")
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	pinnedID := first.accountID
+	first.release()
+	pool.observe(pinnedID, &claude.HTTPError{StatusCode: 429, RetryAfter: time.Minute, RetryAfterSet: true})
+
+	_, err = pool.acquire("", "", false, "conversation-1")
+	var rateLimitErr *accountRateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("error = %v, want account rate-limit error", err)
+	}
+}
+
+func TestClientPoolReloadAddsAndRemovesAccounts(t *testing.T) {
+	pool, err := newClientPool("https://claude.ai", []config.Account{
+		{SessionKey: "account-a"},
+		{SessionKey: "account-b"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("newClientPool: %v", err)
+	}
+	original := pool.accounts[0].client
+
+	changed, err := pool.reloadConfigured([]config.Account{
+		{SessionKey: "account-a"},
+		{SessionKey: "account-c"},
+	})
+	if err != nil || !changed {
+		t.Fatalf("reload: changed=%v err=%v", changed, err)
+	}
+	if len(pool.accounts) != 2 {
+		t.Fatalf("configured accounts = %d, want 2", len(pool.accounts))
+	}
+	if pool.accounts[0].client != original {
+		t.Fatal("unchanged account client was recreated")
+	}
+	if pool.accountByID[credentialID("account-b", "")].configured.Load() {
+		t.Fatal("removed account remains configured")
+	}
+	if _, ok := pool.accountByID[credentialID("account-c", "")]; !ok {
+		t.Fatal("new account was not registered")
+	}
 }
 
 func TestConversationStoreScopesAccountsAndSerializesTurns(t *testing.T) {
